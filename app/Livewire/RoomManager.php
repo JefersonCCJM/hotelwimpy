@@ -3350,6 +3350,67 @@ class RoomManager extends Component
     }
 
     /**
+     * Sincroniza stay_nights de una estadía con el rango contractual de reservation_room.
+     * Elimina noches fuera de rango (si no están pagadas), crea faltantes y actualiza precios.
+     *
+     * @throws \RuntimeException Si hay noches pagadas fuera del nuevo rango.
+     */
+    private function syncStayNightsForReservationRoomRange(
+        Reservation $reservation,
+        ReservationRoom $reservationRoom,
+        Stay $stay,
+        Carbon $checkInDate,
+        Carbon $checkOutDate,
+        float $nightPrice
+    ): void {
+        if (!$checkOutDate->gt($checkInDate)) {
+            throw new \RuntimeException('Rango de fechas inválido para sincronizar noches.');
+        }
+
+        $nightPrice = round(max(0, $nightPrice), 2);
+        $targetDates = [];
+        for ($cursor = $checkInDate->copy(); $cursor->lt($checkOutDate); $cursor->addDay()) {
+            $targetDates[] = $cursor->toDateString();
+        }
+
+        $stayNights = StayNight::query()
+            ->where('stay_id', $stay->id)
+            ->where('room_id', (int) $reservationRoom->room_id)
+            ->orderBy('date')
+            ->get();
+
+        foreach ($stayNights as $stayNight) {
+            $nightDate = Carbon::parse((string) $stayNight->date)->toDateString();
+
+            if (in_array($nightDate, $targetDates, true)) {
+                continue;
+            }
+
+            if ((bool) $stayNight->is_paid) {
+                throw new \RuntimeException(
+                    'No se puede guardar: existen noches pagadas fuera del nuevo rango de fechas.'
+                );
+            }
+
+            $stayNight->delete();
+        }
+
+        foreach ($targetDates as $targetDate) {
+            StayNight::updateOrCreate(
+                [
+                    'stay_id' => $stay->id,
+                    'date' => $targetDate,
+                ],
+                [
+                    'reservation_id' => $reservation->id,
+                    'room_id' => (int) $reservationRoom->room_id,
+                    'price' => $nightPrice,
+                ]
+            );
+        }
+    }
+
+    /**
      * Registra una devolución de dinero al cliente.
      * 
      * SINGLE SOURCE OF TRUTH: Usa la tabla `payments` para registrar devoluciones.
@@ -4191,7 +4252,7 @@ class RoomManager extends Component
      * 
      * REGLAS CRÍTICAS:
      * - NO crea nueva reserva (usa la existente)
-     * - NO modifica stay ni fechas
+     * - Permite editar fechas de ocupación activas sin crear nueva reserva
      * - Cliente principal es OBLIGATORIO
      * - Precio solo se actualiza si override_total_amount = true
      * - Nuevo precio debe ser >= pagos realizados
@@ -4223,6 +4284,7 @@ class RoomManager extends Component
 
                 // Validar que la reserva tiene un stay activo (no permitir modificar reservas liberadas)
                 $stay = Stay::where('reservation_id', $reservation->id)
+                    ->where('room_id', $data['room_id'])
                     ->whereNull('check_out_at')
                     ->whereIn('status', ['active', 'pending_checkout'])
                     ->first();
@@ -4437,6 +4499,28 @@ class RoomManager extends Component
                     if ($newTotal <= 0) {
                         $newTotal = (float) ($reservation->total_amount ?? 0);
                     }
+                }
+
+                // Sincronizar noches cobrables con el nuevo rango de fechas y precio vigente.
+                $finalNightPrice = (float) ($reservationRoom->fresh()->price_per_night ?? 0);
+                if ($finalNightPrice <= 0 && $newNights > 0) {
+                    $finalNightPrice = round($newTotal / $newNights, 2);
+                }
+                $this->syncStayNightsForReservationRoomRange(
+                    $reservation,
+                    $reservationRoom,
+                    $stay,
+                    $newCheckInDate,
+                    $newCheckOutDate,
+                    $finalNightPrice
+                );
+
+                // Recalcular total desde stay_nights (SSOT) para evitar que quede el precio anterior.
+                $stayNightsTotal = (float) StayNight::query()
+                    ->where('reservation_id', $reservation->id)
+                    ->sum('price');
+                if ($stayNightsTotal > 0) {
+                    $newTotal = $stayNightsTotal;
                 }
 
                 $salesDebt = (float)($reservation->sales?->where('is_paid', false)->sum('total') ?? 0);
