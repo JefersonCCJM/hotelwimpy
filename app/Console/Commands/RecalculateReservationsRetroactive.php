@@ -8,6 +8,8 @@ use App\Support\HotelTime;
 use Carbon\Carbon;
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\Log;
+use RuntimeException;
+use Symfony\Component\Process\Process;
 use Throwable;
 
 class RecalculateReservationsRetroactive extends Command
@@ -19,6 +21,8 @@ class RecalculateReservationsRetroactive extends Command
         {--chunk=200 : Tamano de lote}
         {--dry-run : Simula sin guardar cambios}
         {--force : Permite ejecucion en produccion}
+        {--confirm : Confirmacion explicita para ejecutar cambios (sin --dry-run)}
+        {--backup-sql= : Ruta .sql para backup previo con mysqldump (si se omite valor usa ruta automatica)}
         {--keep-total : No actualizar reservations.total_amount}
         {--without-sales-debt : Excluye deuda de ventas del balance}
         {--strict-paid-outside-range : Falla si hay noches pagadas fuera de rango}
@@ -28,6 +32,8 @@ class RecalculateReservationsRetroactive extends Command
 
     public function handle(ReservationRetroactiveRecalculationService $service): int
     {
+        $dryRun = (bool) $this->option('dry-run');
+
         if (app()->environment('production') && !$this->option('force')) {
             $this->error('En produccion debes confirmar con --force.');
             $this->line('Sugerido primero: php artisan reservations:recalculate-retroactive --dry-run --force');
@@ -48,7 +54,6 @@ class RecalculateReservationsRetroactive extends Command
         }
 
         $chunkSize = max(1, (int) $this->option('chunk'));
-        $dryRun = (bool) $this->option('dry-run');
         $withTrashed = (bool) $this->option('with-trashed');
         $reservationIds = $this->parseReservationIds((array) $this->option('reservation-id'));
 
@@ -87,6 +92,26 @@ class RecalculateReservationsRetroactive extends Command
                 . ($from ? $from->toDateString() : '...') . ' -> '
                 . ($to ? $to->toDateString() : '...')
             );
+        }
+
+        if (!$dryRun && !$this->confirmWriteExecution($totalReservations)) {
+            $this->warn('Ejecucion cancelada.');
+            return Command::FAILURE;
+        }
+
+        try {
+            $backupPath = $this->maybeRunBackupSql($dryRun);
+        } catch (Throwable $e) {
+            $this->error('No fue posible crear backup SQL previo: ' . $e->getMessage());
+            Log::error('Error creando backup SQL antes de recalculo retroactivo', [
+                'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString(),
+            ]);
+            return Command::FAILURE;
+        }
+
+        if (!empty($backupPath)) {
+            $this->info('Backup SQL generado en: ' . $backupPath);
         }
 
         $summary = [
@@ -241,5 +266,159 @@ class RecalculateReservationsRetroactive extends Command
 
         return $date->startOfDay();
     }
-}
 
+    private function confirmWriteExecution(int $totalReservations): bool
+    {
+        if ((bool) $this->option('confirm')) {
+            return true;
+        }
+
+        if (!$this->input->isInteractive()) {
+            $this->error('Falta --confirm para ejecutar cambios en modo no interactivo.');
+            return false;
+        }
+
+        $this->warn(
+            "Vas a ejecutar cambios reales sobre {$totalReservations} reservas. "
+            . 'Recomendado: usar --backup-sql antes de continuar.'
+        );
+
+        return $this->confirm('Confirma la ejecucion real del recalculo retroactivo', false);
+    }
+
+    private function maybeRunBackupSql(bool $dryRun): ?string
+    {
+        $backupOption = $this->option('backup-sql');
+        if ($backupOption === null) {
+            return null;
+        }
+
+        if ($dryRun) {
+            $this->warn('Se omite --backup-sql porque estas en --dry-run.');
+            return null;
+        }
+
+        $backupPath = $this->resolveBackupSqlPath($backupOption);
+        $this->runMysqlDumpBackup($backupPath);
+
+        return $backupPath;
+    }
+
+    private function resolveBackupSqlPath(mixed $optionValue): string
+    {
+        $value = trim((string) $optionValue);
+        if ($value === '' || strtolower($value) === 'auto') {
+            $timestamp = Carbon::now(HotelTime::timezone())->format('Ymd_His');
+            $value = storage_path("app/backups/recalculate_reservations_{$timestamp}.sql");
+        } elseif (!$this->isAbsolutePath($value)) {
+            $value = base_path($value);
+        }
+
+        $directory = dirname($value);
+        if (!is_dir($directory) && !mkdir($directory, 0755, true) && !is_dir($directory)) {
+            throw new RuntimeException("No se pudo crear el directorio para backup: {$directory}");
+        }
+
+        return $value;
+    }
+
+    private function runMysqlDumpBackup(string $backupPath): void
+    {
+        $connectionName = (string) config('database.default', 'mysql');
+        $connectionConfig = (array) config("database.connections.{$connectionName}", []);
+        $driver = (string) ($connectionConfig['driver'] ?? '');
+
+        if ($driver !== 'mysql') {
+            throw new RuntimeException(
+                "El backup automatico solo soporta MySQL (conexion actual: {$driver})."
+            );
+        }
+
+        $database = (string) ($connectionConfig['database'] ?? '');
+        $username = (string) ($connectionConfig['username'] ?? '');
+        $password = (string) ($connectionConfig['password'] ?? '');
+        $host = (string) ($connectionConfig['host'] ?? '127.0.0.1');
+        $port = (string) ($connectionConfig['port'] ?? '3306');
+        $socket = (string) ($connectionConfig['unix_socket'] ?? '');
+
+        if ($database === '' || $username === '') {
+            throw new RuntimeException('Credenciales incompletas en configuracion de base de datos.');
+        }
+
+        $tables = [
+            'reservations',
+            'reservation_rooms',
+            'stays',
+            'stay_nights',
+            'payments',
+            'reservation_sales',
+        ];
+
+        $command = [
+            'mysqldump',
+            '--single-transaction',
+            '--quick',
+            '--skip-lock-tables',
+            "--host={$host}",
+            "--port={$port}",
+            "--user={$username}",
+        ];
+
+        if ($socket !== '') {
+            $command[] = "--socket={$socket}";
+        }
+
+        $command[] = $database;
+        foreach ($tables as $table) {
+            $command[] = $table;
+        }
+
+        $env = [];
+        if ($password !== '') {
+            $env['MYSQL_PWD'] = $password;
+        }
+
+        $process = new Process($command, base_path(), $env, null, 600);
+
+        $handle = @fopen($backupPath, 'wb');
+        if ($handle === false) {
+            throw new RuntimeException("No se pudo abrir el archivo de backup: {$backupPath}");
+        }
+
+        $stderr = '';
+
+        try {
+            $process->run(function (string $type, string $buffer) use ($handle, &$stderr): void {
+                if ($type === Process::OUT) {
+                    fwrite($handle, $buffer);
+                    return;
+                }
+
+                $stderr .= $buffer;
+            });
+        } finally {
+            fclose($handle);
+        }
+
+        if (!$process->isSuccessful()) {
+            @unlink($backupPath);
+            throw new RuntimeException(
+                'mysqldump fallo: ' . trim($stderr !== '' ? $stderr : $process->getOutput())
+            );
+        }
+
+        if (!is_file($backupPath) || (int) @filesize($backupPath) <= 0) {
+            @unlink($backupPath);
+            throw new RuntimeException('El backup generado esta vacio.');
+        }
+    }
+
+    private function isAbsolutePath(string $path): bool
+    {
+        if (str_starts_with($path, '/')) {
+            return true;
+        }
+
+        return (bool) preg_match('/^[A-Za-z]:[\/\\\\]/', $path);
+    }
+}
