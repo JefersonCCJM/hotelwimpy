@@ -1321,10 +1321,19 @@ class RoomManager extends Component
         try {
             $room = Room::findOrFail($roomId);
             $availabilityService = $room->getAvailabilityService();
-            $today = Carbon::today();
+            $selectedDate = $this->getSelectedDate()->startOfDay();
+
+            // Regla operativa: continuar estadia solo aplica en la fecha actual.
+            if (!$selectedDate->isToday()) {
+                $this->dispatch('notify', [
+                    'type' => 'warning',
+                    'message' => 'La estadia solo se puede continuar en la fecha actual.'
+                ]);
+                return;
+            }
 
             // Validar que no sea fecha histórica
-            if ($availabilityService->isHistoricDate($today)) {
+            if ($availabilityService->isHistoricDate($selectedDate)) {
                 $this->dispatch('notify', [
                     'type' => 'error',
                     'message' => 'No se pueden hacer cambios en fechas históricas.'
@@ -1332,8 +1341,18 @@ class RoomManager extends Component
                 return;
             }
 
+            // SSOT: alinear backend con el estado operativo que habilita el boton.
+            $operationalStatus = $room->getOperationalStatus($selectedDate);
+            if ($operationalStatus !== 'pending_checkout') {
+                $this->dispatch('notify', [
+                    'type' => 'warning',
+                    'message' => 'La estadia no esta en estado de checkout pendiente para continuar.'
+                ]);
+                return;
+            }
+
             // Obtener stay activa para hoy
-            $stay = $availabilityService->getStayForDate($today);
+            $stay = $availabilityService->getStayForDate($selectedDate);
 
             if (!$stay) {
                 $this->dispatch('notify', [
@@ -1366,10 +1385,8 @@ class RoomManager extends Component
             }
 
             // Verificar que la fecha de checkout sea hoy (estado pending_checkout)
-            $checkoutDate = Carbon::parse($reservationRoom->check_out_date);
-            $today = HotelTime::endOfOperatingDay($today);
-            
-            if (!$checkoutDate->equalTo($today)) {
+            $checkoutDate = Carbon::parse((string) $reservationRoom->check_out_date)->startOfDay();
+            if (!$checkoutDate->isSameDay($selectedDate)) {
                 $this->dispatch('notify', [
                     'type' => 'warning',
                     'message' => 'La estadía no está en estado de checkout pendiente para continuar.'
