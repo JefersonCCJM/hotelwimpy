@@ -2,6 +2,7 @@
 
 @php
     use App\Support\HotelTime;
+    use Carbon\Carbon;
     
     $selectedDate = $currentDate instanceof \Carbon\Carbon ? $currentDate : \Carbon\Carbon::parse($currentDate);
     $isPastDate = HotelTime::isOperationalPastDate($selectedDate);
@@ -32,7 +33,48 @@
     $hasStayInfo = $stay && $stay->reservation;
     $currentReservation = $hasStayInfo ? $stay->reservation : null;
     $currentReservationCode = strtoupper(trim((string) ($currentReservation->reservation_code ?? '')));
-    $hasCurrentReservationBadge = str_starts_with($currentReservationCode, 'RES-');
+    $selectedDateNormalized = $selectedDate->copy()->startOfDay();
+    $reservationBadge = null;
+
+    // Prioridad 1: reserva actual de la estadia (si es RES-)
+    if ($currentReservation && str_starts_with($currentReservationCode, 'RES-')) {
+        $reservationBadge = $currentReservation;
+    }
+
+    // Prioridad 2: reserva contractual del dia seleccionado (sin stay aun), solo RES-
+    if (!$reservationBadge && isset($room->reservationRooms)) {
+        $reservationRoomForDate = $room->reservationRooms->first(function ($reservationRoom) use ($selectedDateNormalized) {
+            $reservation = $reservationRoom->reservation ?? null;
+            if (!$reservation) {
+                return false;
+            }
+
+            if (method_exists($reservation, 'trashed') && $reservation->trashed()) {
+                return false;
+            }
+
+            $code = strtoupper(trim((string) ($reservation->reservation_code ?? '')));
+            if (!str_starts_with($code, 'RES-')) {
+                return false;
+            }
+
+            if (empty($reservationRoom->check_in_date) || empty($reservationRoom->check_out_date)) {
+                return false;
+            }
+
+            $checkIn = Carbon::parse((string) $reservationRoom->check_in_date)->startOfDay();
+            $checkOut = Carbon::parse((string) $reservationRoom->check_out_date)->startOfDay();
+
+            return $selectedDateNormalized->gte($checkIn) && $selectedDateNormalized->lte($checkOut);
+        });
+
+        if ($reservationRoomForDate && !empty($reservationRoomForDate->reservation)) {
+            $reservationBadge = $reservationRoomForDate->reservation;
+        }
+    }
+
+    $reservationBadgeCode = strtoupper(trim((string) ($reservationBadge->reservation_code ?? '')));
+    $hasReservationBadge = str_starts_with($reservationBadgeCode, 'RES-');
 @endphp
 
 <tr
@@ -168,28 +210,13 @@
                 </template>
             </span>
 
-            {{-- Etiqueta de reserva actual: solo codigos RES- --}}
-            @if ($hasCurrentReservationBadge)
-                <div
-                    class="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-semibold bg-indigo-50 text-indigo-700 border border-indigo-200"
-                    title="Reserva actual">
-                    <i class="fas fa-receipt text-[8px]"></i>
-                    <span class="font-mono">{{ $currentReservationCode }}</span>
-                </div>
-            @endif
-
-            @php
-                $futureRes = $room->future_reservation;
-                $hasFutureBadge = $futureRes
-                    && str_starts_with(strtoupper($futureRes->reservation_code ?? ''), 'RES-');
-            @endphp
-            @if ($hasFutureBadge)
+            @if ($hasReservationBadge)
                 <div
                     class="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-semibold bg-blue-50 text-blue-600 border border-blue-200"
-                    title="{{ $futureRes->customer->name ?? '' }}">
+                    title="{{ $reservationBadge->customer->name ?? '' }}">
                     <i class="fas fa-calendar-check text-[8px]"></i>
-                    <span>{{ \Illuminate\Support\Str::limit($futureRes->customer->name ?? 'Sin cliente', 15) }}</span>
-                    <span class="font-mono text-blue-500">{{ $futureRes->reservation_code }}</span>
+                    <span>{{ \Illuminate\Support\Str::limit($reservationBadge->customer->name ?? 'Sin cliente', 15) }}</span>
+                    <span class="font-mono text-blue-500">{{ $reservationBadgeCode }}</span>
                 </div>
             @endif
         </div>
