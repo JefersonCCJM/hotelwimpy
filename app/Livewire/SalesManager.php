@@ -6,11 +6,14 @@ use Livewire\Component;
 use Livewire\WithPagination;
 use Livewire\Attributes\On;
 use App\Models\Sale;
+use App\Models\Shift;
 use App\Models\Room;
 use App\Models\Category;
 use App\Models\User;
+use App\Models\ExternalIncome;
 use Carbon\Carbon;
 use Illuminate\Support\Facades\Auth;
+use Illuminate\Support\Facades\DB;
 
 class SalesManager extends Component
 {
@@ -36,6 +39,14 @@ class SalesManager extends Component
     public int $createSaleModalKey = 0;
     public int $showSaleModalKey = 0;
     public int $editSaleModalKey = 0;
+
+    // Ingresos externos
+    public array $externalIncomeForm = [
+        'amount' => '',
+        'payment_method' => 'efectivo',
+        'reason' => '',
+        'notes' => '',
+    ];
 
     // Query string para mantener filtros en URL
     protected $queryString = [
@@ -231,6 +242,71 @@ class SalesManager extends Component
         return Sale::find($this->selectedSaleId);
     }
 
+    public function registerExternalIncome(): void
+    {
+        if (!Auth::user()?->can('create_sales')) {
+            return;
+        }
+
+        $validated = $this->validate([
+            'externalIncomeForm.amount' => ['required', 'numeric', 'gt:0'],
+            'externalIncomeForm.payment_method' => ['required', 'in:efectivo,transferencia'],
+            'externalIncomeForm.reason' => ['required', 'string', 'max:180'],
+            'externalIncomeForm.notes' => ['nullable', 'string', 'max:2000'],
+        ], [
+            'externalIncomeForm.amount.required' => 'El monto es obligatorio.',
+            'externalIncomeForm.amount.gt' => 'El monto debe ser mayor a 0.',
+            'externalIncomeForm.payment_method.required' => 'Debe seleccionar un método de pago.',
+            'externalIncomeForm.reason.required' => 'El motivo es obligatorio.',
+        ]);
+
+        $user = Auth::user();
+        $operationalShift = Shift::openOperational()->first();
+        $activeHandover = $user?->turnoActivo()->first();
+        $isAdmin = $user?->hasRole('Administrador') ?? false;
+
+        if (
+            !$isAdmin &&
+            (
+                !$operationalShift ||
+                !$activeHandover ||
+                (int) ($activeHandover->from_shift_id ?? $activeHandover->id) !== (int) $operationalShift->id
+            )
+        ) {
+            $this->dispatch('notify', type: 'error', message: 'Debe existir un turno operativo abierto para registrar ingresos externos.');
+            return;
+        }
+
+        $selectedDate = $this->date ?: now()->format('Y-m-d');
+
+        DB::transaction(function () use ($validated, $user, $activeHandover, $selectedDate): void {
+            ExternalIncome::create([
+                'user_id' => (int) $user->id,
+                'shift_handover_id' => $activeHandover?->id,
+                'payment_method' => (string) $validated['externalIncomeForm']['payment_method'],
+                'income_date' => $selectedDate,
+                'amount' => (float) $validated['externalIncomeForm']['amount'],
+                'reason' => trim((string) $validated['externalIncomeForm']['reason']),
+                'notes' => !empty($validated['externalIncomeForm']['notes'])
+                    ? trim((string) $validated['externalIncomeForm']['notes'])
+                    : null,
+            ]);
+
+            if ($activeHandover) {
+                $activeHandover->updateTotals();
+            }
+        });
+
+        $this->externalIncomeForm = [
+            'amount' => '',
+            'payment_method' => 'efectivo',
+            'reason' => '',
+            'notes' => '',
+        ];
+
+        $this->dispatch('notify', type: 'success', message: 'Ingreso externo registrado correctamente.');
+    }
+
     public function render()
     {
         $query = Sale::with(['user', 'room', 'items.product.category']);
@@ -304,6 +380,13 @@ class SalesManager extends Component
         $pendingSales = (clone $statsQuery)->where('debt_status', 'pendiente')->count();
         $totalCollected = (clone $statsQuery)->where('debt_status', 'pagado')->sum('total');
 
+        $externalIncomes = ExternalIncome::with(['user'])
+            ->byDate($selectedDate)
+            ->orderByDesc('created_at')
+            ->limit(15)
+            ->get();
+        $externalIncomesTotal = (float) $externalIncomes->sum('amount');
+
         // Obtener datos para filtros
         $receptionists = User::whereHas('roles', function($q) {
             $q->whereIn('name', ['Administrador', 'Recepcionista Día', 'Recepcionista Noche']);
@@ -328,6 +411,8 @@ class SalesManager extends Component
             'paidSales' => $paidSales,
             'pendingSales' => $pendingSales,
             'totalCollected' => $totalCollected,
+            'externalIncomes' => $externalIncomes,
+            'externalIncomesTotal' => $externalIncomesTotal,
             'selectedDate' => $selectedDate,
             'currentDate' => $currentDate,
             'daysInMonth' => $daysInMonth,

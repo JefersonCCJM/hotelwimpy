@@ -46,6 +46,115 @@
         </div>
     </div>
 
+    <!-- 1.1 BLOQUE INGRESOS EXTERNOS -->
+    <div class="bg-white rounded-xl border border-gray-100 p-4 sm:p-6">
+        <div class="flex items-center justify-between mb-4">
+            <div class="flex items-center gap-3">
+                <div class="p-2.5 rounded-xl bg-emerald-50 text-emerald-600">
+                    <i class="fas fa-hand-holding-usd text-lg"></i>
+                </div>
+                <div>
+                    <h2 class="text-base sm:text-lg font-bold text-gray-900">Ingresos Externos a Base</h2>
+                    <p class="text-xs text-gray-500">
+                        Total del dÃ­a: <span class="font-bold text-gray-900">${{ number_format($externalIncomesTotal ?? 0, 0, ',', '.') }}</span>
+                    </p>
+                </div>
+            </div>
+        </div>
+
+        @can('create_sales')
+        <div class="grid grid-cols-1 lg:grid-cols-12 gap-4 mb-5">
+            <div class="lg:col-span-2">
+                <label class="block text-xs font-semibold text-gray-700 uppercase tracking-wider mb-2">Monto</label>
+                <input type="number"
+                       wire:model.defer="externalIncomeForm.amount"
+                       min="0.01"
+                       step="0.01"
+                       class="block w-full px-3 py-2.5 border border-gray-300 rounded-xl text-sm text-gray-900 focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:border-transparent"
+                       placeholder="0">
+                @error('externalIncomeForm.amount') <p class="text-xs text-red-600 mt-1">{{ $message }}</p> @enderror
+            </div>
+
+            <div class="lg:col-span-2">
+                <label class="block text-xs font-semibold text-gray-700 uppercase tracking-wider mb-2">MÃ©todo</label>
+                <select wire:model.defer="externalIncomeForm.payment_method"
+                        class="block w-full px-3 py-2.5 border border-gray-300 rounded-xl text-sm text-gray-900 focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:border-transparent bg-white">
+                    <option value="efectivo">Efectivo</option>
+                    <option value="transferencia">Transferencia</option>
+                </select>
+                @error('externalIncomeForm.payment_method') <p class="text-xs text-red-600 mt-1">{{ $message }}</p> @enderror
+            </div>
+
+            <div class="lg:col-span-5">
+                <label class="block text-xs font-semibold text-gray-700 uppercase tracking-wider mb-2">Motivo</label>
+                <input type="text"
+                       wire:model.defer="externalIncomeForm.reason"
+                       maxlength="180"
+                       class="block w-full px-3 py-2.5 border border-gray-300 rounded-xl text-sm text-gray-900 focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:border-transparent"
+                       placeholder="Ejemplo: Ingreso por ajuste de caja">
+                @error('externalIncomeForm.reason') <p class="text-xs text-red-600 mt-1">{{ $message }}</p> @enderror
+            </div>
+
+            <div class="lg:col-span-3">
+                <label class="block text-xs font-semibold text-gray-700 uppercase tracking-wider mb-2">Notas (opcional)</label>
+                <div class="flex gap-2">
+                    <input type="text"
+                           wire:model.defer="externalIncomeForm.notes"
+                           maxlength="2000"
+                           class="block w-full px-3 py-2.5 border border-gray-300 rounded-xl text-sm text-gray-900 focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:border-transparent"
+                           placeholder="Detalle adicional">
+                    <button type="button"
+                            wire:click="registerExternalIncome"
+                            class="inline-flex items-center justify-center px-4 py-2.5 rounded-xl border border-emerald-600 bg-emerald-600 text-white text-sm font-semibold hover:bg-emerald-700 transition-all">
+                        <i class="fas fa-save mr-2"></i>Guardar
+                    </button>
+                </div>
+                @error('externalIncomeForm.notes') <p class="text-xs text-red-600 mt-1">{{ $message }}</p> @enderror
+            </div>
+        </div>
+        @endcan
+
+        <div class="overflow-x-auto border border-gray-100 rounded-xl">
+            <table class="min-w-full divide-y divide-gray-100">
+                <thead class="bg-gray-50/70">
+                    <tr>
+                        <th class="px-4 py-2.5 text-left text-xs font-semibold text-gray-600 uppercase tracking-wider">Hora</th>
+                        <th class="px-4 py-2.5 text-left text-xs font-semibold text-gray-600 uppercase tracking-wider">Recepcionista</th>
+                        <th class="px-4 py-2.5 text-left text-xs font-semibold text-gray-600 uppercase tracking-wider">Motivo</th>
+                        <th class="px-4 py-2.5 text-left text-xs font-semibold text-gray-600 uppercase tracking-wider">MÃ©todo</th>
+                        <th class="px-4 py-2.5 text-right text-xs font-semibold text-gray-600 uppercase tracking-wider">Monto</th>
+                    </tr>
+                </thead>
+                <tbody class="bg-white divide-y divide-gray-50">
+                    @forelse(($externalIncomes ?? collect()) as $income)
+                        <tr class="hover:bg-gray-50/50 transition-colors">
+                            <td class="px-4 py-3 text-sm text-gray-700">{{ $income->created_at?->format('H:i') }}</td>
+                            <td class="px-4 py-3 text-sm text-gray-900">{{ $income->user->name ?? 'N/A' }}</td>
+                            <td class="px-4 py-3 text-sm text-gray-700">
+                                <div class="font-medium text-gray-900">{{ $income->reason }}</div>
+                                @if(!empty($income->notes))
+                                    <div class="text-xs text-gray-500">{{ $income->notes }}</div>
+                                @endif
+                            </td>
+                            <td class="px-4 py-3 text-sm">
+                                <span class="inline-flex items-center px-2.5 py-1 rounded-lg text-xs font-medium {{ $income->payment_method === 'efectivo' ? 'bg-green-50 text-green-700 border border-green-100' : 'bg-blue-50 text-blue-700 border border-blue-100' }}">
+                                    {{ ucfirst($income->payment_method) }}
+                                </span>
+                            </td>
+                            <td class="px-4 py-3 text-right text-sm font-bold text-gray-900">${{ number_format($income->amount ?? 0, 0, ',', '.') }}</td>
+                        </tr>
+                    @empty
+                        <tr>
+                            <td colspan="5" class="px-4 py-8 text-center text-sm text-gray-500">
+                                No hay ingresos externos registrados para esta fecha.
+                            </td>
+                        </tr>
+                    @endforelse
+                </tbody>
+            </table>
+        </div>
+    </div>
+
     <!-- 2. BLOQUE FILTROS Y CALENDARIO -->
     <div class="bg-white rounded-xl border border-gray-100 p-4 sm:p-6">
         <div class="space-y-6">

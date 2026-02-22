@@ -98,6 +98,11 @@ class ShiftHandover extends Model
         return $this->hasMany(Sale::class);
     }
 
+    public function externalIncomes(): HasMany
+    {
+        return $this->hasMany(ExternalIncome::class);
+    }
+
     public function productOuts(): HasMany
     {
         return $this->hasMany(ShiftProductOut::class);
@@ -152,6 +157,13 @@ class ShiftHandover extends Model
         $salesTransferTotal = (float) $this->sales()->where('payment_method', 'transferencia')->sum('transfer_amount')
             + (float) $this->sales()->where('payment_method', 'ambos')->sum('transfer_amount');
 
+        $externalIncomeCashTotal = (float) $this->externalIncomes()
+            ->where('payment_method', 'efectivo')
+            ->sum('amount');
+        $externalIncomeTransferTotal = (float) $this->externalIncomes()
+            ->where('payment_method', 'transferencia')
+            ->sum('amount');
+
         $windowStart = $this->started_at ?? $this->created_at ?? now();
         $windowEnd = $this->ended_at ?? now();
         if ($windowEnd->lt($windowStart)) {
@@ -180,8 +192,8 @@ class ShiftHandover extends Model
         $paymentsCashTotal = (float) ($lodgingPayments->cash_total ?? 0);
         $paymentsTransferTotal = (float) ($lodgingPayments->transfer_total ?? 0);
 
-        $this->total_entradas_efectivo = $salesCashTotal + $paymentsCashTotal;
-        $this->total_entradas_transferencia = $salesTransferTotal + $paymentsTransferTotal;
+        $this->total_entradas_efectivo = $salesCashTotal + $paymentsCashTotal + $externalIncomeCashTotal;
+        $this->total_entradas_transferencia = $salesTransferTotal + $paymentsTransferTotal + $externalIncomeTransferTotal;
 
         // Total salidas de caja del turno:
         // - Gastos (CashOutflow)

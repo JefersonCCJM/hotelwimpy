@@ -82,4 +82,9 @@ class User extends Authenticatable
         return $this->hasOne(ShiftHandover::class, 'entregado_por')
             ->where('status', \App\Enums\ShiftHandoverStatus::ACTIVE);
     }
+
+    public function externalIncomes(): \Illuminate\Database\Eloquent\Relations\HasMany
+    {
+        return $this->hasMany(ExternalIncome::class);
+    }
 }
