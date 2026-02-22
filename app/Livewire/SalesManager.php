@@ -32,11 +32,9 @@ class SalesManager extends Component
     public $filtersOpen = false;
 
     // Estado de modales
-    public bool $createSaleModalOpen = false;
     public bool $showSaleModalOpen = false;
     public bool $editSaleModalOpen = false;
     public ?int $selectedSaleId = null;
-    public int $createSaleModalKey = 0;
     public int $showSaleModalKey = 0;
     public int $editSaleModalKey = 0;
     public array $paymentMethodSelection = [];
@@ -156,22 +154,6 @@ class SalesManager extends Component
                !empty($this->room_id);
     }
 
-    public function openCreateSaleModal(): void
-    {
-        if (!Auth::user()?->can('create_sales')) {
-            return;
-        }
-
-        $this->closeAllSaleModals();
-        $this->createSaleModalOpen = true;
-        $this->createSaleModalKey++;
-    }
-
-    public function closeCreateSaleModal(): void
-    {
-        $this->createSaleModalOpen = false;
-    }
-
     public function openShowSaleModal(int $saleId): void
     {
         if (!Auth::user()?->can('view_sales') || !$this->saleExists($saleId)) {
@@ -223,7 +205,6 @@ class SalesManager extends Component
     #[On('sales-close-modal')]
     public function closeAllSaleModals(): void
     {
-        $this->createSaleModalOpen = false;
         $this->showSaleModalOpen = false;
         $this->editSaleModalOpen = false;
         $this->selectedSaleId = null;

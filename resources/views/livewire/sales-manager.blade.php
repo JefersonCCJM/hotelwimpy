@@ -2,7 +2,6 @@
     filtersOpen: @entangle('filtersOpen'),
     receptionistId: @entangle('receptionist_id'),
     isAdmin: {{ Auth::user()->hasRole('Administrador') ? 'true' : 'false' }},
-    createSaleModalOpen: @entangle('createSaleModalOpen'),
     showSaleModalOpen: @entangle('showSaleModalOpen'),
     editSaleModalOpen: @entangle('editSaleModalOpen'),
     confirmingDelete: false,
@@ -31,127 +30,17 @@
             
             <div class="flex items-center space-x-3">
                 @can('create_sales')
-                <button type="button"
-                   wire:click="openCreateSaleModal"
+                <a href="#quick-sale-section"
                    class="inline-flex items-center justify-center px-4 sm:px-5 py-2.5 rounded-xl border-2 border-green-600 bg-green-600 text-white text-sm font-semibold hover:bg-green-700 hover:border-green-700 transition-all duration-200 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-green-500 shadow-sm hover:shadow-md">
                     <i class="fas fa-plus mr-2"></i>
-                    <span>Nueva Venta</span>
-                </button>
+                    <span>Registrar Venta</span>
+                </a>
                 @endcan
                 
                 @can('update_products')
                 <livewire:update-product-prices />
                 @endcan
             </div>
-        </div>
-    </div>
-
-    <!-- 1.1 BLOQUE INGRESOS EXTERNOS -->
-    <div class="bg-white rounded-xl border border-gray-100 p-4 sm:p-6">
-        <div class="flex items-center justify-between mb-4">
-            <div class="flex items-center gap-3">
-                <div class="p-2.5 rounded-xl bg-emerald-50 text-emerald-600">
-                    <i class="fas fa-hand-holding-usd text-lg"></i>
-                </div>
-                <div>
-                    <h2 class="text-base sm:text-lg font-bold text-gray-900">Ingresos Externos a Base</h2>
-                    <p class="text-xs text-gray-500">
-                        Total del dÃ­a: <span class="font-bold text-gray-900">${{ number_format($externalIncomesTotal ?? 0, 0, ',', '.') }}</span>
-                    </p>
-                </div>
-            </div>
-        </div>
-
-        @can('create_sales')
-        <div class="grid grid-cols-1 lg:grid-cols-12 gap-4 mb-5">
-            <div class="lg:col-span-2">
-                <label class="block text-xs font-semibold text-gray-700 uppercase tracking-wider mb-2">Monto</label>
-                <input type="number"
-                       wire:model.defer="externalIncomeForm.amount"
-                       min="0.01"
-                       step="0.01"
-                       class="block w-full px-3 py-2.5 border border-gray-300 rounded-xl text-sm text-gray-900 focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:border-transparent"
-                       placeholder="0">
-                @error('externalIncomeForm.amount') <p class="text-xs text-red-600 mt-1">{{ $message }}</p> @enderror
-            </div>
-
-            <div class="lg:col-span-2">
-                <label class="block text-xs font-semibold text-gray-700 uppercase tracking-wider mb-2">MÃ©todo</label>
-                <select wire:model.defer="externalIncomeForm.payment_method"
-                        class="block w-full px-3 py-2.5 border border-gray-300 rounded-xl text-sm text-gray-900 focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:border-transparent bg-white">
-                    <option value="efectivo">Efectivo</option>
-                    <option value="transferencia">Transferencia</option>
-                </select>
-                @error('externalIncomeForm.payment_method') <p class="text-xs text-red-600 mt-1">{{ $message }}</p> @enderror
-            </div>
-
-            <div class="lg:col-span-5">
-                <label class="block text-xs font-semibold text-gray-700 uppercase tracking-wider mb-2">Motivo</label>
-                <input type="text"
-                       wire:model.defer="externalIncomeForm.reason"
-                       maxlength="180"
-                       class="block w-full px-3 py-2.5 border border-gray-300 rounded-xl text-sm text-gray-900 focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:border-transparent"
-                       placeholder="Ejemplo: Ingreso por ajuste de caja">
-                @error('externalIncomeForm.reason') <p class="text-xs text-red-600 mt-1">{{ $message }}</p> @enderror
-            </div>
-
-            <div class="lg:col-span-3">
-                <label class="block text-xs font-semibold text-gray-700 uppercase tracking-wider mb-2">Notas (opcional)</label>
-                <div class="flex gap-2">
-                    <input type="text"
-                           wire:model.defer="externalIncomeForm.notes"
-                           maxlength="2000"
-                           class="block w-full px-3 py-2.5 border border-gray-300 rounded-xl text-sm text-gray-900 focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:border-transparent"
-                           placeholder="Detalle adicional">
-                    <button type="button"
-                            wire:click="registerExternalIncome"
-                            class="inline-flex items-center justify-center px-4 py-2.5 rounded-xl border border-emerald-600 bg-emerald-600 text-white text-sm font-semibold hover:bg-emerald-700 transition-all">
-                        <i class="fas fa-save mr-2"></i>Guardar
-                    </button>
-                </div>
-                @error('externalIncomeForm.notes') <p class="text-xs text-red-600 mt-1">{{ $message }}</p> @enderror
-            </div>
-        </div>
-        @endcan
-
-        <div class="overflow-x-auto border border-gray-100 rounded-xl">
-            <table class="min-w-full divide-y divide-gray-100">
-                <thead class="bg-gray-50/70">
-                    <tr>
-                        <th class="px-4 py-2.5 text-left text-xs font-semibold text-gray-600 uppercase tracking-wider">Hora</th>
-                        <th class="px-4 py-2.5 text-left text-xs font-semibold text-gray-600 uppercase tracking-wider">Recepcionista</th>
-                        <th class="px-4 py-2.5 text-left text-xs font-semibold text-gray-600 uppercase tracking-wider">Motivo</th>
-                        <th class="px-4 py-2.5 text-left text-xs font-semibold text-gray-600 uppercase tracking-wider">MÃ©todo</th>
-                        <th class="px-4 py-2.5 text-right text-xs font-semibold text-gray-600 uppercase tracking-wider">Monto</th>
-                    </tr>
-                </thead>
-                <tbody class="bg-white divide-y divide-gray-50">
-                    @forelse(($externalIncomes ?? collect()) as $income)
-                        <tr class="hover:bg-gray-50/50 transition-colors">
-                            <td class="px-4 py-3 text-sm text-gray-700">{{ $income->created_at?->format('H:i') }}</td>
-                            <td class="px-4 py-3 text-sm text-gray-900">{{ $income->user->name ?? 'N/A' }}</td>
-                            <td class="px-4 py-3 text-sm text-gray-700">
-                                <div class="font-medium text-gray-900">{{ $income->reason }}</div>
-                                @if(!empty($income->notes))
-                                    <div class="text-xs text-gray-500">{{ $income->notes }}</div>
-                                @endif
-                            </td>
-                            <td class="px-4 py-3 text-sm">
-                                <span class="inline-flex items-center px-2.5 py-1 rounded-lg text-xs font-medium {{ $income->payment_method === 'efectivo' ? 'bg-green-50 text-green-700 border border-green-100' : 'bg-blue-50 text-blue-700 border border-blue-100' }}">
-                                    {{ ucfirst($income->payment_method) }}
-                                </span>
-                            </td>
-                            <td class="px-4 py-3 text-right text-sm font-bold text-gray-900">${{ number_format($income->amount ?? 0, 0, ',', '.') }}</td>
-                        </tr>
-                    @empty
-                        <tr>
-                            <td colspan="5" class="px-4 py-8 text-center text-sm text-gray-500">
-                                No hay ingresos externos registrados para esta fecha.
-                            </td>
-                        </tr>
-                    @endforelse
-                </tbody>
-            </table>
         </div>
     </div>
 
@@ -371,6 +260,131 @@
         </div>
     </div>
 
+    <!-- 3. BLOQUE REGISTRO RAPIDO DE VENTA -->
+    @can('create_sales')
+    <div id="quick-sale-section" class="bg-white rounded-xl border border-gray-100 p-4 sm:p-6">
+        <div class="flex items-center gap-3 mb-4">
+            <div class="p-2.5 rounded-xl bg-green-50 text-green-600">
+                <i class="fas fa-cash-register text-lg"></i>
+            </div>
+            <div>
+                <h2 class="text-base sm:text-lg font-bold text-gray-900">Registro Rápido de Venta</h2>
+                <p class="text-xs text-gray-500">Registra ventas sin abrir modal.</p>
+            </div>
+        </div>
+        <livewire:create-sale :is-modal="false" :wire:key="'sales-inline-create-'.$selectedDate" />
+    </div>
+    @endcan
+
+    <!-- 4. BLOQUE INGRESOS EXTERNOS -->
+    <div class="bg-white rounded-xl border border-gray-100 p-4 sm:p-6">
+        <div class="flex items-center justify-between mb-4">
+            <div class="flex items-center gap-3">
+                <div class="p-2.5 rounded-xl bg-emerald-50 text-emerald-600">
+                    <i class="fas fa-hand-holding-usd text-lg"></i>
+                </div>
+                <div>
+                    <h2 class="text-base sm:text-lg font-bold text-gray-900">Ingresos Externos a Base</h2>
+                    <p class="text-xs text-gray-500">
+                        Total del día: <span class="font-bold text-gray-900">${{ number_format($externalIncomesTotal ?? 0, 0, ',', '.') }}</span>
+                    </p>
+                </div>
+            </div>
+        </div>
+
+        @can('create_sales')
+        <div class="grid grid-cols-1 lg:grid-cols-12 gap-4 mb-5">
+            <div class="lg:col-span-2">
+                <label class="block text-xs font-semibold text-gray-700 uppercase tracking-wider mb-2">Monto</label>
+                <input type="number"
+                       wire:model.defer="externalIncomeForm.amount"
+                       min="0.01"
+                       step="0.01"
+                       class="block w-full px-3 py-2.5 border border-gray-300 rounded-xl text-sm text-gray-900 focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:border-transparent"
+                       placeholder="0">
+                @error('externalIncomeForm.amount') <p class="text-xs text-red-600 mt-1">{{ $message }}</p> @enderror
+            </div>
+
+            <div class="lg:col-span-2">
+                <label class="block text-xs font-semibold text-gray-700 uppercase tracking-wider mb-2">Metodo</label>
+                <select wire:model.defer="externalIncomeForm.payment_method"
+                        class="block w-full px-3 py-2.5 border border-gray-300 rounded-xl text-sm text-gray-900 focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:border-transparent bg-white">
+                    <option value="efectivo">Efectivo</option>
+                    <option value="transferencia">Transferencia</option>
+                </select>
+                @error('externalIncomeForm.payment_method') <p class="text-xs text-red-600 mt-1">{{ $message }}</p> @enderror
+            </div>
+
+            <div class="lg:col-span-5">
+                <label class="block text-xs font-semibold text-gray-700 uppercase tracking-wider mb-2">Motivo</label>
+                <input type="text"
+                       wire:model.defer="externalIncomeForm.reason"
+                       maxlength="180"
+                       class="block w-full px-3 py-2.5 border border-gray-300 rounded-xl text-sm text-gray-900 focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:border-transparent"
+                       placeholder="Ejemplo: Ingreso por ajuste de caja">
+                @error('externalIncomeForm.reason') <p class="text-xs text-red-600 mt-1">{{ $message }}</p> @enderror
+            </div>
+
+            <div class="lg:col-span-3">
+                <label class="block text-xs font-semibold text-gray-700 uppercase tracking-wider mb-2">Notas (opcional)</label>
+                <div class="flex gap-2">
+                    <input type="text"
+                           wire:model.defer="externalIncomeForm.notes"
+                           maxlength="2000"
+                           class="block w-full px-3 py-2.5 border border-gray-300 rounded-xl text-sm text-gray-900 focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:border-transparent"
+                           placeholder="Detalle adicional">
+                    <button type="button"
+                            wire:click="registerExternalIncome"
+                            class="inline-flex items-center justify-center px-4 py-2.5 rounded-xl border border-emerald-600 bg-emerald-600 text-white text-sm font-semibold hover:bg-emerald-700 transition-all">
+                        <i class="fas fa-save mr-2"></i>Guardar
+                    </button>
+                </div>
+                @error('externalIncomeForm.notes') <p class="text-xs text-red-600 mt-1">{{ $message }}</p> @enderror
+            </div>
+        </div>
+        @endcan
+
+        <div class="overflow-x-auto border border-gray-100 rounded-xl">
+            <table class="min-w-full divide-y divide-gray-100">
+                <thead class="bg-gray-50/70">
+                    <tr>
+                        <th class="px-4 py-2.5 text-left text-xs font-semibold text-gray-600 uppercase tracking-wider">Hora</th>
+                        <th class="px-4 py-2.5 text-left text-xs font-semibold text-gray-600 uppercase tracking-wider">Recepcionista</th>
+                        <th class="px-4 py-2.5 text-left text-xs font-semibold text-gray-600 uppercase tracking-wider">Motivo</th>
+                        <th class="px-4 py-2.5 text-left text-xs font-semibold text-gray-600 uppercase tracking-wider">Metodo</th>
+                        <th class="px-4 py-2.5 text-right text-xs font-semibold text-gray-600 uppercase tracking-wider">Monto</th>
+                    </tr>
+                </thead>
+                <tbody class="bg-white divide-y divide-gray-50">
+                    @forelse(($externalIncomes ?? collect()) as $income)
+                        <tr class="hover:bg-gray-50/50 transition-colors">
+                            <td class="px-4 py-3 text-sm text-gray-700">{{ $income->created_at?->format('H:i') }}</td>
+                            <td class="px-4 py-3 text-sm text-gray-900">{{ $income->user->name ?? 'N/A' }}</td>
+                            <td class="px-4 py-3 text-sm text-gray-700">
+                                <div class="font-medium text-gray-900">{{ $income->reason }}</div>
+                                @if(!empty($income->notes))
+                                    <div class="text-xs text-gray-500">{{ $income->notes }}</div>
+                                @endif
+                            </td>
+                            <td class="px-4 py-3 text-sm">
+                                <span class="inline-flex items-center px-2.5 py-1 rounded-lg text-xs font-medium {{ $income->payment_method === 'efectivo' ? 'bg-green-50 text-green-700 border border-green-100' : 'bg-blue-50 text-blue-700 border border-blue-100' }}">
+                                    {{ ucfirst($income->payment_method) }}
+                                </span>
+                            </td>
+                            <td class="px-4 py-3 text-right text-sm font-bold text-gray-900">${{ number_format($income->amount ?? 0, 0, ',', '.') }}</td>
+                        </tr>
+                    @empty
+                        <tr>
+                            <td colspan="5" class="px-4 py-8 text-center text-sm text-gray-500">
+                                No hay ingresos externos registrados para esta fecha.
+                            </td>
+                        </tr>
+                    @endforelse
+                </tbody>
+            </table>
+        </div>
+    </div>
+
     <!-- Tabla de Ventas -->
     <div class="bg-white rounded-xl border border-gray-100 shadow-sm overflow-hidden">
         @if($sales->count() > 0)
@@ -572,48 +586,16 @@
                 </div>
                 <h3 class="text-sm font-semibold text-gray-900 mb-1">No se encontraron ventas</h3>
                 <p class="text-xs text-gray-500 mb-4">Intente ajustar los filtros de búsqueda</p>
-                <button type="button"
-                   wire:click="openCreateSaleModal"
+                <a href="#quick-sale-section"
                    class="inline-flex items-center px-4 py-2 rounded-lg bg-green-600 text-white text-sm font-medium hover:bg-green-700 transition-all duration-200">
                     <i class="fas fa-plus mr-2"></i>
-                    Crear Primera Venta
-                </button>
+                    Registrar Venta
+                </a>
             </div>
         @endif
     </div>
 
     <!-- Modal de Confirmación Estilizado -->
-    <!-- Modal Nueva Venta -->
-    <div x-show="createSaleModalOpen"
-         class="fixed inset-0 z-[90] overflow-y-auto"
-         x-transition:enter="transition ease-out duration-300"
-         x-transition:enter-start="opacity-0"
-         x-transition:enter-end="opacity-100"
-         x-transition:leave="transition ease-in duration-200"
-         x-transition:leave-start="opacity-100"
-         x-transition:leave-end="opacity-0"
-         @keydown.escape.window="$wire.closeCreateSaleModal()"
-         x-cloak>
-        <div class="fixed inset-0 bg-gray-900/60 backdrop-blur-sm" @click="$wire.closeCreateSaleModal()"></div>
-        <div class="flex min-h-full items-center justify-center p-4 sm:p-6">
-            <div class="relative w-full max-w-6xl max-h-[92vh] overflow-y-auto rounded-2xl bg-gray-50 shadow-2xl border border-gray-100">
-                <div class="sticky top-0 z-10 flex items-center justify-between border-b border-gray-200 bg-white px-4 py-3 sm:px-6">
-                    <div class="flex items-center gap-2">
-                        <i class="fas fa-plus text-green-600"></i>
-                        <h3 class="text-sm sm:text-base font-semibold text-gray-900">Nueva Venta</h3>
-                    </div>
-                    <button type="button" @click="$wire.closeCreateSaleModal()" class="text-gray-400 hover:text-gray-700">
-                        <i class="fas fa-times"></i>
-                    </button>
-                </div>
-                <div class="p-4 sm:p-6">
-                    @if($createSaleModalOpen)
-                        <livewire:create-sale :is-modal="true" :wire:key="'sales-create-modal-'.$createSaleModalKey" />
-                    @endif
-                </div>
-            </div>
-        </div>
-    </div>
 
     <!-- Modal Ver Venta -->
     <div x-show="showSaleModalOpen"
