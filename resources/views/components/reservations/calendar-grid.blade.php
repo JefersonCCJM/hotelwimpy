@@ -52,6 +52,7 @@
 
     $payloadsByReservationId = [];
     $checkedInReservationIds = [];
+    $pendingCheckoutReservationIds = [];
     $buildReservationPayload = static function ($reservation) use (
         &$payloadsByReservationId,
         $formatRoomsInfo,
@@ -362,7 +363,12 @@
                     $activeStayStatus = (string) ($activeStay->status ?? '');
                     $dayReservation = $activeStay->reservation ?? null;
 
-                    if (in_array($activeStayStatus, ['active', 'pending_checkout'], true)) {
+                    if ($activeStayStatus === 'pending_checkout') {
+                        $dayStatus = 'pending_checkout';
+                        if ($dayReservation && !empty($dayReservation->id)) {
+                            $pendingCheckoutReservationIds[(int) $dayReservation->id] = true;
+                        }
+                    } elseif ($activeStayStatus === 'active') {
                         $dayStatus = 'checked_in';
                         if ($dayReservation && !empty($dayReservation->id)) {
                             $checkedInReservationIds[(int) $dayReservation->id] = true;
@@ -471,6 +477,16 @@
             'ranges' => $ranges,
             'dayCells' => $dayCells,
         ];
+    }
+
+    foreach (array_keys($pendingCheckoutReservationIds) as $pendingCheckoutReservationId) {
+        if (!isset($payloadsByReservationId[$pendingCheckoutReservationId])) {
+            continue;
+        }
+
+        $payloadsByReservationId[$pendingCheckoutReservationId]['status'] = 'Pendiente checkout';
+        $payloadsByReservationId[$pendingCheckoutReservationId]['can_checkin'] = false;
+        $payloadsByReservationId[$pendingCheckoutReservationId]['can_pay'] = !empty($payloadsByReservationId[$pendingCheckoutReservationId]['payment_url']);
     }
 
     foreach (array_keys($checkedInReservationIds) as $checkedInReservationId) {
@@ -634,6 +650,7 @@
 
                                     $statusLabel = match ($status) {
                                         'checked_in' => 'Llego',
+                                        'pending_checkout' => 'Pendiente checkout',
                                         'reserved' => 'Reservada',
                                         'occupied' => 'Ocupada',
                                         'cancelled' => 'Cancelada',
@@ -669,6 +686,7 @@
                                         ? 'bg-red-500 hover:bg-red-600 text-white'
                                         : match ($status) {
                                             'checked_in' => 'bg-emerald-600 hover:bg-emerald-700 text-white',
+                                            'pending_checkout' => 'bg-yellow-400 hover:bg-yellow-500 text-white',
                                             'reserved' => 'bg-indigo-500 hover:bg-indigo-600 text-white',
                                             'occupied' => 'bg-red-500 hover:bg-red-600 text-white',
                                             'cancelled' => 'bg-slate-100 border border-dashed border-slate-300 hover:bg-slate-200 text-slate-600',
@@ -710,6 +728,10 @@
 
                                                 @if ($status === 'checked_in')
                                                     <i class="fas fa-check-circle absolute left-1 bottom-1 text-[9px] opacity-80"></i>
+                                                @endif
+
+                                                @if ($status === 'pending_checkout')
+                                                    <i class="fas fa-door-open absolute left-1 bottom-1 text-[9px] opacity-80"></i>
                                                 @endif
 
                                                 @if ($payload)
