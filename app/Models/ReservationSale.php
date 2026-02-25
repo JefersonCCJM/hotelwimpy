@@ -9,6 +9,8 @@ class ReservationSale extends Model
 {
     protected $fillable = [
         'reservation_id',
+        'sale_id',
+        'sale_item_id',
         'product_id',
         'quantity',
         'unit_price',
@@ -20,6 +22,16 @@ class ReservationSale extends Model
     public function reservation(): BelongsTo
     {
         return $this->belongsTo(Reservation::class);
+    }
+
+    public function sale(): BelongsTo
+    {
+        return $this->belongsTo(Sale::class);
+    }
+
+    public function saleItem(): BelongsTo
+    {
+        return $this->belongsTo(SaleItem::class);
     }
 
     public function product(): BelongsTo

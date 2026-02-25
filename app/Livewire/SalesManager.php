@@ -13,6 +13,7 @@ use App\Models\Product;
 use App\Models\Category;
 use App\Models\User;
 use App\Models\ExternalIncome;
+use App\Services\RoomConsumptionLinkService;
 use Carbon\Carbon;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\DB;
@@ -258,7 +259,9 @@ class SalesManager extends Component
             $selectedMethod = 'efectivo';
         }
 
-        DB::transaction(function () use ($sale, $selectedMethod): void {
+        $roomConsumptionLinkService = app(RoomConsumptionLinkService::class);
+
+        DB::transaction(function () use ($sale, $selectedMethod, $roomConsumptionLinkService): void {
             $cashAmount = $selectedMethod === 'efectivo' ? (float) $sale->total : null;
             $transferAmount = $selectedMethod === 'transferencia' ? (float) $sale->total : null;
 
@@ -268,6 +271,8 @@ class SalesManager extends Component
                 'transfer_amount' => $transferAmount,
                 'debt_status' => 'pagado',
             ]);
+            $sale->refresh();
+            $roomConsumptionLinkService->syncPaymentStatusFromSale($sale);
 
             if ($sale->shiftHandover) {
                 $sale->shiftHandover->updateTotals();
@@ -316,20 +321,34 @@ class SalesManager extends Component
 
         $selectedDate = $this->date ?: now()->format('Y-m-d');
         $payload = $validated['quickSaleForm'];
+        $roomConsumptionLinkService = app(RoomConsumptionLinkService::class);
+        $linkedReservation = null;
+
+        if (!empty($payload['room_id'])) {
+            $linkedReservation = $roomConsumptionLinkService->resolveReservationForRoomOnDate(
+                (int) $payload['room_id'],
+                Carbon::parse($selectedDate)
+            );
+
+            if (!$linkedReservation) {
+                $this->dispatch('notify', type: 'error', message: 'La habitación seleccionada no tiene una reserva activa para cargar el consumo.');
+                return;
+            }
+        }
 
         try {
-            DB::transaction(function () use ($payload, $user, $activeHandover, $selectedDate): void {
+            DB::transaction(function () use ($payload, $user, $activeHandover, $selectedDate, $roomConsumptionLinkService, $linkedReservation): void {
                 /** @var Product $product */
                 $product = Product::query()->lockForUpdate()->findOrFail((int) $payload['product_id']);
                 $quantity = (int) $payload['quantity'];
 
                 if ((int) ($product->quantity ?? 0) < $quantity) {
-                    throw new \RuntimeException("Stock insuficiente para {$product->name}. Disponible: {$product->quantity}");
+                    throw new \DomainException("Stock insuficiente para {$product->name}. Disponible: {$product->quantity}");
                 }
 
                 $total = round((float) ($product->price ?? 0) * $quantity, 2);
                 if ($total <= 0) {
-                    throw new \RuntimeException('El total de la venta debe ser mayor a 0.');
+                    throw new \DomainException('El total de la venta debe ser mayor a 0.');
                 }
 
                 $paymentMethod = (string) $payload['payment_method'];
@@ -366,6 +385,10 @@ class SalesManager extends Component
                     'total' => $total,
                 ]);
 
+                if ($linkedReservation && !empty($payload['room_id'])) {
+                    $roomConsumptionLinkService->syncSaleItemsToReservation($sale, $linkedReservation);
+                }
+
                 $product->recordMovement(
                     -$quantity,
                     'sale',
@@ -393,7 +416,10 @@ class SalesManager extends Component
                 'trace' => $e->getTraceAsString(),
                 'form' => $this->quickSaleForm,
             ]);
-            $this->dispatch('notify', type: 'error', message: $e->getMessage());
+            $message = $e instanceof \DomainException
+                ? $e->getMessage()
+                : 'Error al registrar la venta. Intente nuevamente.';
+            $this->dispatch('notify', type: 'error', message: $message);
         }
     }
 

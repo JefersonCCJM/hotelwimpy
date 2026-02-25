@@ -5410,6 +5410,7 @@ class RoomManager extends Component
             $availabilityService = $room->getAvailabilityService();
             $operationalDate = $this->getSelectedDate()->startOfDay();
             $today = $operationalDate->copy();
+            $releaseTimestamp = now();
 
             if (!HotelTime::isOperationalToday($operationalDate)) {
                 $this->dispatch('notify', type: 'warning', message: 'La liberacion solo se permite en el dia operativo actual.');
@@ -5428,8 +5429,15 @@ class RoomManager extends Component
                 return;
             }
 
-            // ===== PASO 1: Obtener el stay que intersecta HOY =====
-            $activeStay = $availabilityService->getStayForDate($operationalDate);
+            // ===== PASO 1: Obtener estadia ABIERTA real para hoy operativo =====
+            // No usar getStayForDate() aqui porque puede devolver estadias historicas ya cerradas.
+            $openStayQuery = Stay::query()
+                ->where('room_id', (int) $room->id)
+                ->whereNull('check_out_at')
+                ->where('check_in_at', '<=', $releaseTimestamp)
+                ->orderByDesc('check_in_at');
+
+            $activeStay = $openStayQuery->first();
 
             if (!$activeStay) {
                 $this->dispatch('notify', type: 'info', message: 'No hay ocupacion activa para liberar en el dia operativo actual.');
@@ -5574,11 +5582,21 @@ class RoomManager extends Component
                 ]);
             }
 
-            // ===== PASO 6: Cerrar la STAY =====
-            $activeStay->update([
-                'check_out_at' => now(),
-                'status' => 'finished',
-            ]);
+            // ===== PASO 6: Cerrar TODAS las stays abiertas de la habitacion =====
+            // Defensa ante inconsistencias legacy (mas de una stay abierta para la misma habitacion).
+            $checkoutTimestamp = $releaseTimestamp->copy();
+            $closedStays = Stay::query()
+                ->where('room_id', (int) $room->id)
+                ->whereNull('check_out_at')
+                ->where('check_in_at', '<=', $checkoutTimestamp)
+                ->update([
+                    'check_out_at' => $checkoutTimestamp,
+                    'status' => 'finished',
+                ]);
+
+            if ($closedStays <= 0) {
+                throw new \RuntimeException('No se pudo cerrar la estadia activa de la habitacion.');
+            }
 
             // ===== PASO 7: Actualizar estado de la reserva =====
             $reservation->balance_due = 0;
@@ -5586,6 +5604,13 @@ class RoomManager extends Component
                 ->where('code', 'paid')
                 ->value('id');
             $reservation->save();
+
+            \Log::info('Release Room: stay closure applied', [
+                'room_id' => $room->id,
+                'reservation_id' => $reservation->id,
+                'closed_stays' => $closedStays,
+                'checkout_timestamp' => $checkoutTimestamp->toDateTimeString(),
+            ]);
 
             // ===== PASO 8: Crear registro en historial de liberación =====
             try {

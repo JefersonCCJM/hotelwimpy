@@ -11,6 +11,7 @@ use App\Models\Room;
 use App\Models\Category;
 use App\Models\Shift;
 use App\Models\ShiftHandover;
+use App\Services\RoomConsumptionLinkService;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
@@ -43,13 +44,16 @@ class SaleController extends Controller
      * Store a newly created resource in storage.
      * Handles business logic for creating sales.
      */
-    public function store(StoreSaleRequest $request): RedirectResponse
+    public function store(StoreSaleRequest $request, RoomConsumptionLinkService $roomConsumptionLinkService): RedirectResponse
     {
         DB::beginTransaction();
 
         try {
             $user = Auth::user();
-            $saleDate = now();
+            $saleDate = $request->filled('sale_date')
+                ? Carbon::parse((string) $request->sale_date)
+                : now();
+            $linkedReservation = null;
 
             // Los valores ya vienen sanitizados por StoreSaleRequest@prepareForValidation
             $cashAmount = (float) $request->cash_amount;
@@ -60,9 +64,12 @@ class SaleController extends Controller
             $total = 0;
 
             foreach ($items as $item) {
-                $product = Product::findOrFail($item['product_id']);
+                $product = Product::query()
+                    ->lockForUpdate()
+                    ->findOrFail($item['product_id']);
 
                 if ($product->quantity < $item['quantity']) {
+                    DB::rollBack();
                     return back()
                         ->withInput()
                         ->withErrors(['items' => "Stock insuficiente para {$product->name}. Disponible: {$product->quantity}"]);
@@ -82,6 +89,7 @@ class SaleController extends Controller
             } elseif ($request->payment_method === 'ambos') {
                 // Ya vienen del request sanitizados
                 if (abs(($cashAmount + $transferAmount) - $total) > 0.01) {
+                    DB::rollBack();
                     return back()
                         ->withInput()
                         ->withErrors(['payment_method' => "La suma de efectivo ($" . number_format($cashAmount, 0, ',', '.') . ") y transferencia ($" . number_format($transferAmount, 0, ',', '.') . ") debe ser igual al total: $" . number_format($total, 0, ',', '.')]);
@@ -98,6 +106,21 @@ class SaleController extends Controller
                 $debtStatus = $request->debt_status ?? 'pagado';
             } else {
                 $debtStatus = 'pagado';
+            }
+
+            if (!empty($request->room_id)) {
+                $linkedReservation = $roomConsumptionLinkService->resolveReservationForRoomOnDate(
+                    (int) $request->room_id,
+                    $saleDate->copy()
+                );
+
+                if (!$linkedReservation) {
+                    DB::rollBack();
+
+                    return back()
+                        ->withInput()
+                        ->withErrors(['room_id' => 'La habitación seleccionada no tiene una reserva activa para cargar el consumo.']);
+                }
             }
 
             $isAdmin = $user->hasRole('Administrador');
@@ -133,7 +156,9 @@ class SaleController extends Controller
 
             // Crear items y descontar stock
             foreach ($items as $item) {
-                $product = Product::findOrFail($item['product_id']);
+                $product = Product::query()
+                    ->lockForUpdate()
+                    ->findOrFail($item['product_id']);
                 $itemTotal = $product->price * $item['quantity'];
 
                 SaleItem::create([
@@ -146,6 +171,10 @@ class SaleController extends Controller
 
                 // Descontar del inventario y registrar movimiento histórico
                 $product->recordMovement(-$item['quantity'], 'sale', "Venta #{$sale->id}", $sale->room_id);
+            }
+
+            if ($linkedReservation && !empty($sale->room_id)) {
+                $roomConsumptionLinkService->syncSaleItemsToReservation($sale, $linkedReservation);
             }
 
             // Actualizar totales del turno cuando existe asociación
@@ -170,7 +199,7 @@ class SaleController extends Controller
 
             return back()
                 ->withInput()
-                ->withErrors(['error' => 'Error al registrar la venta: ' . $e->getMessage() . ' en ' . $e->getFile() . ':' . $e->getLine()]);
+                ->withErrors(['error' => 'Error al registrar la venta. Intente nuevamente.']);
         }
     }
 
@@ -196,7 +225,7 @@ class SaleController extends Controller
      * Update the specified resource in storage.
      * Handles business logic for updating sales.
      */
-    public function update(UpdateSaleRequest $request, Sale $sale): RedirectResponse
+    public function update(UpdateSaleRequest $request, Sale $sale, RoomConsumptionLinkService $roomConsumptionLinkService): RedirectResponse
     {
         DB::beginTransaction();
 
@@ -215,6 +244,7 @@ class SaleController extends Controller
             } elseif ($request->payment_method === 'ambos') {
                 // Ya vienen del request sanitizados
                 if (abs(($cashAmount + $transferAmount) - $total) > 0.01) {
+                    DB::rollBack();
                     return back()
                         ->withInput()
                         ->withErrors(['payment_method' => "La suma de efectivo ($" . number_format($cashAmount, 0, ',', '.') . ") y transferencia ($" . number_format($transferAmount, 0, ',', '.') . ") debe ser igual al total: $" . number_format($total, 0, ',', '.')]);
@@ -244,6 +274,8 @@ class SaleController extends Controller
             }
 
             $sale->update($updateData);
+            $sale->refresh();
+            $roomConsumptionLinkService->syncPaymentStatusFromSale($sale);
 
             // Si la venta tiene un turno asociado, actualizar totales del turno
             if ($sale->shiftHandover) {
@@ -267,18 +299,20 @@ class SaleController extends Controller
 
             return back()
                 ->withInput()
-                ->withErrors(['error' => 'Error al actualizar la venta: ' . $e->getMessage() . ' en ' . $e->getFile() . ':' . $e->getLine()]);
+                ->withErrors(['error' => 'Error al actualizar la venta. Intente nuevamente.']);
         }
     }
 
     /**
      * Remove the specified resource from storage.
      */
-    public function destroy(Sale $sale): RedirectResponse
+    public function destroy(Sale $sale, RoomConsumptionLinkService $roomConsumptionLinkService): RedirectResponse
     {
         DB::beginTransaction();
 
         try {
+            $roomConsumptionLinkService->deleteLinkedReservationSales($sale);
+
             // Restaurar stock de productos y registrar ajuste histórico
             foreach ($sale->items as $item) {
                 $product = $item->product;
@@ -304,9 +338,13 @@ class SaleController extends Controller
                 ->with('success', 'Venta eliminada exitosamente. El stock ha sido restaurado.');
         } catch (\Exception $e) {
             DB::rollBack();
+            \Log::error('Error eliminando venta: ' . $e->getMessage(), [
+                'exception' => $e,
+                'sale_id' => $sale->id,
+            ]);
 
             return back()
-                ->withErrors(['error' => 'Error al eliminar la venta: ' . $e->getMessage()]);
+                ->withErrors(['error' => 'Error al eliminar la venta. Intente nuevamente.']);
         }
     }
 
