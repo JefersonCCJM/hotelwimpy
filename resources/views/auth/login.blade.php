@@ -90,7 +90,7 @@
                         <img src="{{ asset('assets/img/backgrounds/logo-Photoroom.png') }}" alt="Hotel San Pedro" class="h-20 w-auto object-contain">
                     </div>
                     <h1 class="text-3xl font-extrabold text-slate-900 tracking-tight">Iniciar Sesión</h1>
-                    <p class="mt-2 text-slate-500 font-medium italic">Hotel San Pedro</p>
+                    <p class="mt-2 text-slate-500 font-medium italic">Hotel Wimpy</p>
                 </div>
 
                 <form class="space-y-6" method="POST" action="{{ route('login') }}">
