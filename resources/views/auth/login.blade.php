@@ -60,7 +60,7 @@
             <div class="absolute -top-6 left-1/2 -translate-x-1/2 z-20">
                 <div class="bg-slate-900/90 text-white px-5 py-2.5 rounded-2xl flex items-center shadow-2xl text-xs font-bold whitespace-nowrap border border-white/10 backdrop-blur-md tracking-wider">
                     <i class="fas fa-hotel mr-2 text-sm text-slate-300"></i>
-                    SISTEMA DE GESTIÓN HOTELERA
+                    HOTEL WIMPY
                 </div>
             </div>
 
@@ -90,7 +90,6 @@
                         <img src="{{ asset('assets/img/backgrounds/logo-Photoroom.png') }}" alt="Hotel Wimpy" class="h-20 w-auto object-contain">
                     </div>
                     <h1 class="text-3xl font-extrabold text-slate-900 tracking-tight">Iniciar Sesión</h1>
-                    <p class="mt-2 text-slate-500 font-medium italic">Hotel Wimpy</p>
                 </div>
 
                 <form class="space-y-6" method="POST" action="{{ route('login') }}">
