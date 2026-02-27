@@ -1450,19 +1450,6 @@ class RoomManager extends Component
                 return;
             }
 
-            $hasFormalReservation = $room->reservationRooms()
-                ->whereDate('check_in_date', '<=', $selectedDate->toDateString())
-                ->whereDate('check_out_date', '>', $selectedDate->toDateString())
-                ->whereHas('reservation', function ($query) {
-                    $query->whereNull('deleted_at');
-                })
-                ->exists();
-
-            if ($hasFormalReservation) {
-                $this->dispatch('notify', type: 'error', message: 'La habitacion ya tiene una reserva registrada para este dia.');
-                return;
-            }
-
             RoomQuickReservation::query()->updateOrCreate(
                 [
                     'room_id' => $room->id,
