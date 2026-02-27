@@ -60,7 +60,7 @@
             <div class="absolute -top-6 left-1/2 -translate-x-1/2 z-20">
                 <div class="bg-slate-900/90 text-white px-5 py-2.5 rounded-2xl flex items-center shadow-2xl text-xs font-bold whitespace-nowrap border border-white/10 backdrop-blur-md tracking-wider">
                     <i class="fas fa-hotel mr-2 text-sm text-slate-300"></i>
-                    HOTEL WIMPY
+                    HOTEL WIMPY Deploy
                 </div>
             </div>
 
