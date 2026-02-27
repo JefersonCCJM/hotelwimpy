@@ -156,7 +156,7 @@
         <!-- Footer -->
         <div class="mt-8 text-center">
             <p class="text-white/60 text-xs font-semibold tracking-widest uppercase">
-                &copy; {{ date('Y') }} HOTEL SAN PEDRO &bull; GESTIÓN INTEGRAL
+                &copy; {{ date('Y') }} HOTEL WIMPY &bull; GESTIÓN INTEGRAL
             </p>
         </div>
     </div>
