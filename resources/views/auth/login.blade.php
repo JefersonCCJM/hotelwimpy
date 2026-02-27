@@ -104,7 +104,7 @@
                         <div class="relative group">
                             <input id="login" name="login" type="text" required autocomplete="username"
                                    class="block w-full pl-4 pr-12 py-4 bg-slate-50/50 border border-slate-200 rounded-2xl text-gray-900 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-slate-900/5 focus:border-slate-900 transition-all duration-200 text-base"
-                                   placeholder="admin@hotel.com o admin"
+                                   placeholder="admin@hotelwimpy.com o admin"
                                    value="{{ old('login') }}">
                             <div class="absolute inset-y-0 right-0 pr-4 flex items-center pointer-events-none">
                                 <i class="fas fa-check text-slate-400 opacity-0 group-focus-within:opacity-100 transition-opacity"></i>
