@@ -134,6 +134,7 @@ class RepairPaidNightStatus extends Command
         $changed = 0;
         $errors = 0;
         $paidFlagsUpdated = 0;
+        $forcedNightUpdates = 0;
 
         foreach (array_chunk($affectedReservationIds, $chunkSize) as $idChunk) {
             $query = Reservation::query()->whereIn('id', $idChunk);
@@ -157,6 +158,15 @@ class RepairPaidNightStatus extends Command
                     }
 
                     $paidFlagsUpdated += (int) ($result['paid_flags_updated'] ?? 0);
+
+                    $reservation->refresh()->loadMissing('reservationRooms');
+                    if ($this->isReservationSettledByBalance($reservation)) {
+                        $forcedUpdates = $this->forceMarkPendingNightsByContractRanges($reservation);
+                        if ($forcedUpdates > 0) {
+                            $forcedNightUpdates += $forcedUpdates;
+                            $changed++;
+                        }
+                    }
                 } catch (Throwable $e) {
                     $errors++;
                     $this->error('Error en reserva #' . (int) $reservation->id . ': ' . $e->getMessage());
@@ -169,6 +179,7 @@ class RepairPaidNightStatus extends Command
         $this->line('Procesadas: ' . $processed);
         $this->line('Con cambios: ' . $changed);
         $this->line('Noches actualizadas (paid flags): ' . $paidFlagsUpdated);
+        $this->line('Noches forzadas por saldo en 0: ' . $forcedNightUpdates);
         $this->line('Errores: ' . $errors);
 
         return $errors > 0 ? Command::FAILURE : Command::SUCCESS;
@@ -177,15 +188,13 @@ class RepairPaidNightStatus extends Command
     private function isReservationAffected(Reservation $reservation): bool
     {
         $contractualTotal = $this->resolveContractualLodgingTotal($reservation);
-        if ($contractualTotal <= 0) {
-            return false;
-        }
-
         $paymentsNet = round(max(0, (float) Payment::query()
             ->where('reservation_id', $reservation->id)
             ->sum('amount')), 2);
+        $isSettledByContract = $contractualTotal > 0 && ($paymentsNet + 0.01 >= $contractualTotal);
+        $isSettledByBalance = $this->isReservationSettledByBalance($reservation);
 
-        if ($paymentsNet + 0.01 < $contractualTotal) {
+        if (!$isSettledByContract && !$isSettledByBalance) {
             return false;
         }
 
@@ -216,6 +225,50 @@ class RepairPaidNightStatus extends Command
         }
 
         return false;
+    }
+
+    private function isReservationSettledByBalance(Reservation $reservation): bool
+    {
+        $balanceDue = round((float) ($reservation->balance_due ?? 0), 2);
+        if ($balanceDue > 0.01) {
+            return false;
+        }
+
+        $salesDebt = round((float) DB::table('reservation_sales')
+            ->where('reservation_id', $reservation->id)
+            ->where('is_paid', false)
+            ->sum('total'), 2);
+
+        return $salesDebt <= 0.01;
+    }
+
+    private function forceMarkPendingNightsByContractRanges(Reservation $reservation): int
+    {
+        $updated = 0;
+
+        foreach ($reservation->reservationRooms as $reservationRoom) {
+            if (empty($reservationRoom->check_in_date) || empty($reservationRoom->check_out_date)) {
+                continue;
+            }
+
+            $roomId = (int) ($reservationRoom->room_id ?? 0);
+            if ($roomId <= 0) {
+                continue;
+            }
+
+            $checkIn = Carbon::parse((string) $reservationRoom->check_in_date)->startOfDay()->toDateString();
+            $checkOut = Carbon::parse((string) $reservationRoom->check_out_date)->startOfDay()->toDateString();
+
+            $updated += (int) StayNight::query()
+                ->where('reservation_id', $reservation->id)
+                ->where('room_id', $roomId)
+                ->whereDate('date', '>=', $checkIn)
+                ->whereDate('date', '<', $checkOut)
+                ->where('is_paid', false)
+                ->update(['is_paid' => true]);
+        }
+
+        return $updated;
     }
 
     private function resolveContractualLodgingTotal(Reservation $reservation): float

@@ -2013,6 +2013,43 @@ class RoomManager extends Component
             // Si hay devoluciones, se suman porque representan dinero que se devolvió
             $totalDebt = ($totalHospedaje - $abonoRealizado) + $refundsTotal + $salesDebt;
 
+            // Contingencia final:
+            // si la cuenta de la habitacion ya esta al dia, no puede existir noche pendiente en UI.
+            if ($totalDebt <= 0.01 && !empty($stayHistory)) {
+                $hasPendingNight = collect($stayHistory)->contains(
+                    static fn (array $night): bool => !(bool) ($night['is_paid'] ?? false)
+                );
+
+                if ($hasPendingNight) {
+                    try {
+                        $syncQuery = \App\Models\StayNight::query()
+                            ->where('reservation_id', $activeReservation->id)
+                            ->where('room_id', $room->id)
+                            ->where('is_paid', false);
+
+                        if ($reservationRoom && !empty($reservationRoom->check_in_date) && !empty($reservationRoom->check_out_date)) {
+                            $syncQuery
+                                ->whereDate('date', '>=', Carbon::parse((string) $reservationRoom->check_in_date)->toDateString())
+                                ->whereDate('date', '<', Carbon::parse((string) $reservationRoom->check_out_date)->toDateString());
+                        }
+
+                        $updatedRows = (int) $syncQuery->update(['is_paid' => true]);
+                        if ($updatedRows > 0) {
+                            $stayHistory = array_map(static function (array $night): array {
+                                $night['is_paid'] = true;
+                                return $night;
+                            }, $stayHistory);
+                        }
+                    } catch (\Exception $e) {
+                        \Log::warning('openRoomDetail: could not force-paid pending nights despite settled debt', [
+                            'reservation_id' => $activeReservation->id,
+                            'room_id' => $room->id,
+                            'error' => $e->getMessage(),
+                        ]);
+                    }
+                }
+            }
+
             $identification = $activeReservation->customer->taxProfile->identification ?? null;
         }
 
