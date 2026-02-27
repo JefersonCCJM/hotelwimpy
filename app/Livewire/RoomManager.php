@@ -1984,6 +1984,11 @@ class RoomManager extends Component
                 $reservationTotalHospedaje = (float)($activeReservation->total_amount ?? 0);
             }
 
+            $roomContractualTotal = round((float) ($reservationRoom?->subtotal ?? 0), 2);
+            if ($roomContractualTotal > 0 && abs($roomContractualTotal - $totalHospedaje) > 0.01) {
+                $totalHospedaje = $roomContractualTotal;
+            }
+
             $roomShareRatio = $reservationTotalHospedaje > 0
                 ? max(0.0, min(1.0, $totalHospedaje / $reservationTotalHospedaje))
                 : 1.0;
@@ -2475,6 +2480,12 @@ class RoomManager extends Component
                 // Si falla (tabla no existe), usar fallback
                 $totalAmount = (float)($reservation->total_amount ?? 0);
             }
+
+            // Para contexto de pago, priorizar el total contractual para evitar falsos saldos por drift legacy.
+            $contractualTotal = $this->resolveReservationContractualLodgingTotal($reservation);
+            if ($contractualTotal > 0) {
+                $totalAmount = $contractualTotal;
+            }
             
             $balanceDue = $totalAmount - $paymentsTotal + $salesDebt;
 
@@ -2496,6 +2507,57 @@ class RoomManager extends Component
     public function handleRegisterPayment($reservationId, $amount, $paymentMethod, $bankName = null, $reference = null, $nightDate = null)
     {
         $this->registerPayment($reservationId, $amount, $paymentMethod, $bankName, $reference, null, $nightDate);
+    }
+
+    #[On('sync-reservation-night-status')]
+    public function handleSyncReservationNightStatus($reservationId, $nightDate = null): void
+    {
+        if ($this->blockEditsForPastDate()) {
+            return;
+        }
+
+        try {
+            $reservationId = (int) $reservationId;
+            if ($reservationId <= 0) {
+                $this->dispatch('notify', type: 'error', message: 'ID de reserva invalido para sincronizar noches.');
+                return;
+            }
+
+            $reservation = Reservation::find($reservationId);
+            if (!$reservation) {
+                $this->dispatch('notify', type: 'error', message: 'Reserva no encontrada para sincronizar noches.');
+                return;
+            }
+
+            $this->ensureStayNightsCoverageForReservation($reservation);
+            $this->normalizeReservationStayNightTotals($reservation);
+            $this->syncStayNightsPaymentCoverage($reservation);
+
+            $updated = 0;
+            if ($this->isReservationLodgingCoveredByNetPayments($reservation)) {
+                $updated = $this->forceMarkReservationNightsAsPaid(
+                    $reservation,
+                    !empty($nightDate) ? (string) $nightDate : null
+                );
+            }
+
+            if ($this->roomDetailModal && $this->detailData && isset($this->detailData['room']['id'])) {
+                $this->openRoomDetail((int) $this->detailData['room']['id']);
+            }
+
+            if ($updated > 0) {
+                $this->dispatch('notify', type: 'success', message: 'Se sincronizo el estado de pago por noches.');
+            } else {
+                $this->dispatch('notify', type: 'info', message: 'Las noches ya estaban sincronizadas.');
+            }
+        } catch (\Exception $e) {
+            \Log::error('Error syncing reservation night state', [
+                'reservation_id' => $reservationId,
+                'night_date' => $nightDate,
+                'error' => $e->getMessage(),
+            ]);
+            $this->dispatch('notify', type: 'error', message: 'No fue posible sincronizar el estado de noches.');
+        }
     }
 
     #[On('openAssignGuests')]
@@ -3158,10 +3220,43 @@ class RoomManager extends Component
                 $totalAmount = (float)($reservation->total_amount ?? 0);
             }
             
+            $contractualTotal = $this->resolveReservationContractualLodgingTotal($reservation);
+            if ($contractualTotal > 0) {
+                $totalAmount = $contractualTotal;
+            }
+
             $balanceDueBefore = $totalAmount - $paymentsTotalBefore + $salesDebt;
 
             // Validar que el monto no exceda el saldo pendiente
-            if ($amount > $balanceDueBefore) {
+            if ($amount > ($balanceDueBefore + 0.009)) {
+                // Contingencia productiva:
+                // si la reserva ya está al día y solo quedó un estado de noche pendiente desfasado,
+                // reparar estado y salir en éxito sin crear pago adicional.
+                $nightRepairApplied = false;
+                try {
+                    $nightRepairApplied = $this->attemptNightStateRepairForPaidReservation(
+                        $reservation,
+                        !empty($nightDate) ? (string) $nightDate : null
+                    );
+                } catch (\Exception $e) {
+                    \Log::warning('registerPayment: unable to repair night states on overpayment validation', [
+                        'reservation_id' => $reservation->id,
+                        'night_date' => $nightDate,
+                        'error' => $e->getMessage(),
+                    ]);
+                }
+
+                if ($nightRepairApplied || $balanceDueBefore <= 0.01) {
+                    if ($this->roomDetailModal && $this->detailData && isset($this->detailData['room']['id'])) {
+                        $this->openRoomDetail((int) $this->detailData['room']['id']);
+                    }
+
+                    $this->dispatch('notify', type: 'success', message: 'La cuenta ya estaba al dia. Se sincronizo el estado de noches pendientes.');
+                    $this->dispatch('close-payment-modal');
+                    $this->dispatch('payment-registered');
+                    return true;
+                }
+
                 $this->dispatch('notify', type: 'error', message: "El monto no puede ser mayor al saldo pendiente (\${$balanceDueBefore}).");
                 $this->dispatch('reset-payment-modal-loading');
                 return false;
@@ -3500,6 +3595,116 @@ class RoomManager extends Component
                 $stayNight->update(['is_paid' => $shouldBePaid]);
             }
         }
+
+        // Regla defensiva de producción:
+        // si el hospedaje contractual ya está 100% cubierto por pagos netos,
+        // no debe quedar ninguna noche en pendiente.
+        if ($this->isReservationLodgingCoveredByNetPayments($reservation)) {
+            StayNight::query()
+                ->where('reservation_id', $reservation->id)
+                ->where('is_paid', false)
+                ->update(['is_paid' => true]);
+        }
+    }
+
+    /**
+     * Obtiene el total contractual del hospedaje de la reserva.
+     */
+    private function resolveReservationContractualLodgingTotal(Reservation $reservation): float
+    {
+        $reservation->loadMissing(['reservationRooms']);
+
+        $reservationRooms = $reservation->reservationRooms ?? collect();
+        $roomsWithSubtotal = $reservationRooms->filter(
+            static fn ($room) => (float) ($room->subtotal ?? 0) > 0
+        );
+
+        if ($roomsWithSubtotal->isNotEmpty() && $roomsWithSubtotal->count() === $reservationRooms->count()) {
+            return round((float) $roomsWithSubtotal->sum(static fn ($room) => (float) ($room->subtotal ?? 0)), 2);
+        }
+
+        $reservationTotal = round((float) ($reservation->total_amount ?? 0), 2);
+        if ($reservationTotal > 0) {
+            return $reservationTotal;
+        }
+
+        return round((float) StayNight::query()
+            ->where('reservation_id', $reservation->id)
+            ->sum('price'), 2);
+    }
+
+    /**
+     * Determina si los pagos netos ya cubren por completo el hospedaje contractual.
+     */
+    private function isReservationLodgingCoveredByNetPayments(Reservation $reservation): bool
+    {
+        $contractualTotal = $this->resolveReservationContractualLodgingTotal($reservation);
+        if ($contractualTotal <= 0) {
+            return false;
+        }
+
+        $paymentsNet = round(max(0, (float) $reservation->payments()->sum('amount')), 2);
+
+        return $paymentsNet + 0.01 >= $contractualTotal;
+    }
+
+    /**
+     * Marca noches como pagadas forzadamente para eliminar desalineaciones cuando la cuenta ya está al día.
+     */
+    private function forceMarkReservationNightsAsPaid(Reservation $reservation, ?string $nightDate = null): int
+    {
+        $query = StayNight::query()
+            ->where('reservation_id', $reservation->id)
+            ->where('is_paid', false);
+
+        if (!empty($nightDate)) {
+            try {
+                $query->whereDate('date', Carbon::parse((string) $nightDate)->toDateString());
+            } catch (\Throwable $e) {
+                // Ignorar formato inválido y continuar con todas las noches pendientes.
+            }
+        }
+
+        return (int) $query->update(['is_paid' => true]);
+    }
+
+    /**
+     * Intenta reparar estados de noches para reservas ya cubiertas.
+     */
+    private function attemptNightStateRepairForPaidReservation(Reservation $reservation, ?string $nightDate = null): bool
+    {
+        $this->syncStayNightsPaymentCoverage($reservation);
+
+        if (!$this->isReservationLodgingCoveredByNetPayments($reservation)) {
+            return false;
+        }
+
+        $updated = $this->forceMarkReservationNightsAsPaid($reservation, $nightDate);
+        if ($updated > 0) {
+            return true;
+        }
+
+        if (!empty($nightDate)) {
+            try {
+                $targetDate = Carbon::parse((string) $nightDate)->toDateString();
+                $targetNight = StayNight::query()
+                    ->where('reservation_id', $reservation->id)
+                    ->whereDate('date', $targetDate)
+                    ->orderBy('id')
+                    ->first();
+
+                if ($targetNight && (bool) $targetNight->is_paid) {
+                    return true;
+                }
+            } catch (\Throwable $e) {
+                // Si la fecha no es válida, continuar con validación global.
+            }
+        }
+
+        return !StayNight::query()
+            ->where('reservation_id', $reservation->id)
+            ->where('is_paid', false)
+            ->exists();
     }
 
     /**

@@ -716,14 +716,24 @@ class ReservationRetroactiveRecalculationService
         Carbon $checkOutDate
     ): float {
         $nightsFromRange = max(1, $checkInDate->diffInDays($checkOutDate));
-        $pricePerNight = round((float) ($reservationRoom->price_per_night ?? 0), 2);
-        if ($pricePerNight > 0) {
-            return $pricePerNight;
-        }
-
         $subtotal = round((float) ($reservationRoom->subtotal ?? 0), 2);
         if ($subtotal > 0 && $nightsFromRange > 0) {
             return round($subtotal / $nightsFromRange, 2);
+        }
+
+        // Contingencia legacy:
+        // en reservas de una sola habitacion, priorizar total_amount para evitar
+        // arrastrar price_per_night inflado por calculos historicos incorrectos.
+        if ($reservation->reservationRooms->count() === 1) {
+            $reservationTotal = round((float) ($reservation->total_amount ?? 0), 2);
+            if ($reservationTotal > 0 && $nightsFromRange > 0) {
+                return round($reservationTotal / $nightsFromRange, 2);
+            }
+        }
+
+        $pricePerNight = round((float) ($reservationRoom->price_per_night ?? 0), 2);
+        if ($pricePerNight > 0) {
+            return $pricePerNight;
         }
 
         $existingPrice = (float) StayNight::query()
@@ -809,4 +819,3 @@ class ReservationRetroactiveRecalculationService
         }
     }
 }
-

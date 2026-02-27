@@ -28,6 +28,20 @@
                 balanceDue: 0
             };
         }
+
+        const numericBalanceDue = Number(financialContext.balanceDue || 0);
+        const hasNightContext = !!nightDate || Number(nightPrice || 0) > 0;
+
+        // Contingencia de produccion:
+        // si el saldo ya es 0 pero una noche aparece pendiente por drift de estado,
+        // sincronizar backend en lugar de intentar registrar un pago invalido.
+        if (hasNightContext && numericBalanceDue <= 0.01 && typeof Livewire !== 'undefined' && Livewire.dispatch) {
+            Livewire.dispatch('sync-reservation-night-status', [
+                reservationId,
+                nightDate || null
+            ]);
+            return;
+        }
         
         // Esperar a que Livewire este inicializado si no lo esta
         if (typeof Livewire === 'undefined' || !Livewire.all) {
