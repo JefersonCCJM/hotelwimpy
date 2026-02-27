@@ -145,7 +145,6 @@ class RoomManager extends Component
      */
     private function findRateForGuests(Room $room, int $guests): float
     {
-        // Validar entrada
         if ($guests <= 0) {
             \Log::warning('findRateForGuests: Invalid guests count', ['guests' => $guests, 'room_id' => $room->id]);
             return (float)($room->base_price_per_night ?? 0);
@@ -153,13 +152,10 @@ class RoomManager extends Component
 
         $rates = $room->rates;
 
-        // Si hay tarifas configuradas, buscar coincidencia exacta
         if ($rates && $rates->isNotEmpty()) {
-            foreach ($rates as $rate) {
+            $validRates = $rates->filter(function ($rate) use ($room) {
                 $min = (int)($rate->min_guests ?? 0);
                 $max = (int)($rate->max_guests ?? 0);
-                
-                // Validar que min y max sean valores válidos
                 if ($min <= 0 || $max <= 0) {
                     \Log::warning('findRateForGuests: Invalid rate range', [
                         'rate_id' => $rate->id,
@@ -167,31 +163,70 @@ class RoomManager extends Component
                         'max_guests' => $rate->max_guests,
                         'room_id' => $room->id,
                     ]);
-                    continue; // Saltar tarifa inválida
+                    return false;
                 }
-                
-                // Coincidencia: guests está dentro del rango [min, max]
-                if ($guests >= $min && $guests <= $max) {
-                    $price = (float)($rate->price_per_night ?? 0);
-                    if ($price > 0) {
-                        \Log::info('findRateForGuests: Rate found', [
-                            'room_id' => $room->id,
-                            'guests' => $guests,
-                            'rate_id' => $rate->id,
-                            'min' => $min,
-                            'max' => $max,
-                            'price_per_night' => $price,
-                        ]);
-                        return $price;
-                    }
+
+                return (float)($rate->price_per_night ?? 0) > 0;
+            });
+
+            $matchingRates = $validRates->filter(function ($rate) use ($guests) {
+                $min = (int)($rate->min_guests ?? 0);
+                $max = (int)($rate->max_guests ?? 0);
+                return $guests >= $min && $guests <= $max;
+            });
+
+            if ($matchingRates->isNotEmpty()) {
+                $exactMatches = $matchingRates->filter(function ($rate) use ($guests) {
+                    return (int)($rate->min_guests ?? 0) === $guests
+                        && (int)($rate->max_guests ?? 0) === $guests;
+                });
+
+                if ($exactMatches->count() > 1) {
+                    \Log::warning('findRateForGuests: Duplicate exact rates detected', [
+                        'room_id' => $room->id,
+                        'guests' => $guests,
+                        'rate_ids' => $exactMatches->pluck('id')->values()->toArray(),
+                    ]);
+                }
+
+                $selectedRate = null;
+                if ($exactMatches->isNotEmpty()) {
+                    $selectedRate = $exactMatches
+                        ->sortByDesc(fn($rate) => (int)($rate->id ?? 0))
+                        ->first();
+                } else {
+                    $selectedRate = $matchingRates
+                        ->sort(function ($a, $b) {
+                            $aWidth = max(0, (int)($a->max_guests ?? 0) - (int)($a->min_guests ?? 0));
+                            $bWidth = max(0, (int)($b->max_guests ?? 0) - (int)($b->min_guests ?? 0));
+
+                            if ($aWidth === $bWidth) {
+                                return (int)($b->id ?? 0) <=> (int)($a->id ?? 0);
+                            }
+
+                            return $aWidth <=> $bWidth;
+                        })
+                        ->first();
+                }
+
+                if ($selectedRate) {
+                    $selectedPrice = (float)($selectedRate->price_per_night ?? 0);
+                    \Log::info('findRateForGuests: Rate selected', [
+                        'room_id' => $room->id,
+                        'guests' => $guests,
+                        'rate_id' => $selectedRate->id,
+                        'min' => (int)($selectedRate->min_guests ?? 0),
+                        'max' => (int)($selectedRate->max_guests ?? 0),
+                        'price_per_night' => $selectedPrice,
+                    ]);
+                    return $selectedPrice;
                 }
             }
-            
-            // No se encontró tarifa coincidente
+
             \Log::warning('findRateForGuests: No matching rate found', [
                 'room_id' => $room->id,
                 'guests' => $guests,
-                'available_rates' => $rates->map(fn($r) => [
+                'available_rates' => $validRates->map(fn($r) => [
                     'id' => $r->id,
                     'min' => $r->min_guests,
                     'max' => $r->max_guests,
@@ -205,7 +240,6 @@ class RoomManager extends Component
             ]);
         }
 
-        // Fallback: usar base_price_per_night
         $basePrice = (float)($room->base_price_per_night ?? 0);
         if ($basePrice > 0) {
             \Log::info('findRateForGuests: Using base_price fallback', [
@@ -216,7 +250,6 @@ class RoomManager extends Component
             return $basePrice;
         }
 
-        // Último recurso: precio por defecto 0 (será detectado por validación)
         \Log::error('findRateForGuests: No price found', [
             'room_id' => $room->id,
             'guests' => $guests,
@@ -379,16 +412,52 @@ class RoomManager extends Component
         }
 
         $guests = $this->calculateGuestCount();
+        $nights = $this->getQuickRentNights();
 
-        $checkIn = Carbon::parse($this->rentForm['check_in_date'] ?? $this->date->toDateString());
-        $checkOut = Carbon::parse($this->rentForm['check_out_date'] ?? $this->date->copy()->addDay()->toDateString());
-        $nights = max(1, $checkIn->diffInDays($checkOut));
+        $pricingMode = (string)($this->rentForm['pricing_mode'] ?? 'auto');
+        $manualPricePerNight = (float)($this->rentForm['manual_price_per_night'] ?? 0);
 
-        $pricePerNight = $this->findRateForGuests($roomModel, $guests);
-        $total = $pricePerNight * $nights;
+        if ($pricingMode === 'manual' && $manualPricePerNight > 0) {
+            $total = round($manualPricePerNight * $nights, 2);
+        } else {
+            $pricePerNight = $this->findRateForGuests($roomModel, $guests);
+            $total = round($pricePerNight * $nights, 2);
+            $this->rentForm['pricing_mode'] = 'auto';
+            $this->rentForm['manual_price_per_night'] = null;
+        }
 
         $this->rentForm['guests_count'] = $guests;
         $this->rentForm['total'] = $total;
+        $this->rentForm['_last_nights'] = $nights;
+
+        $deposit = (float)($this->rentForm['deposit'] ?? 0);
+        if ($deposit > $total) {
+            $this->rentForm['deposit'] = $total;
+        }
+    }
+
+    /**
+     * Obtiene el numero de noches actual del formulario de arriendo rapido.
+     */
+    private function getQuickRentNights(): int
+    {
+        if (!$this->rentForm) {
+            return 1;
+        }
+
+        try {
+            $checkIn = Carbon::parse($this->rentForm['check_in_date'] ?? $this->date->toDateString());
+            $checkOut = Carbon::parse($this->rentForm['check_out_date'] ?? $this->date->copy()->addDay()->toDateString());
+            return max(1, $checkIn->diffInDays($checkOut));
+        } catch (\Throwable $e) {
+            \Log::warning('getQuickRentNights: Invalid check-in/check-out in rentForm', [
+                'check_in_date' => $this->rentForm['check_in_date'] ?? null,
+                'check_out_date' => $this->rentForm['check_out_date'] ?? null,
+                'error' => $e->getMessage(),
+            ]);
+
+            return 1;
+        }
     }
 
     /**
@@ -3835,14 +3904,10 @@ class RoomManager extends Component
                 return;
             }
 
-            // Calculate base price from rates or fallback to base_price_per_night
-            $basePrice = 0;
-            if ($room->rates && $room->rates->isNotEmpty()) {
-                $firstRate = $room->rates->sortBy('min_guests')->first();
-                $basePrice = $firstRate->price_per_night ?? 0;
-            }
-            if ($basePrice == 0 && $room->base_price_per_night) {
-                $basePrice = $room->base_price_per_night;
+            // Precio inicial para 1 huesped.
+            $basePrice = $this->findRateForGuests($room, 1);
+            if ($basePrice <= 0 && $room->base_price_per_night) {
+                $basePrice = (float)$room->base_price_per_night;
             }
 
             $this->rentForm = [
@@ -3856,6 +3921,9 @@ class RoomManager extends Component
                 'guests_count' => 1,
                 'max_capacity' => $room->max_capacity,
                 'total' => $basePrice,
+                'pricing_mode' => 'auto',
+                'manual_price_per_night' => null,
+                '_last_nights' => 1,
                 'deposit' => 0,
                 'payment_method' => 'efectivo',
                     'bank_name' => '', // Opcional para transferencias
@@ -3890,6 +3958,28 @@ class RoomManager extends Component
             $this->rentForm['client_id'] = is_numeric($value) ? (int)$value : null;
         }
         $this->recalculateQuickRentTotals();
+    }
+
+    public function updatedRentFormTotal($value): void
+    {
+        if (!$this->rentForm) {
+            return;
+        }
+
+        $total = is_numeric($value) ? round(max(0, (float)$value), 2) : 0.0;
+        $nights = $this->getQuickRentNights();
+
+        if ($total > 0 && $nights > 0) {
+            $this->rentForm['pricing_mode'] = 'manual';
+            $this->rentForm['manual_price_per_night'] = round($total / $nights, 2);
+        } else {
+            $this->rentForm['pricing_mode'] = 'auto';
+            $this->rentForm['manual_price_per_night'] = null;
+        }
+
+        if ((float)($this->rentForm['deposit'] ?? 0) > $total) {
+            $this->rentForm['deposit'] = $total;
+        }
     }
 
     public function addGuestFromCustomerId($customerId)
@@ -4056,24 +4146,29 @@ class RoomManager extends Component
             // Si el formulario tiene un total definido explícitamente (manual o calculado en frontend),
             // ese valor es la VERDAD ABSOLUTA y NO se recalcula desde tarifas
             $manualTotal = isset($this->rentForm['total']) ? (float)($this->rentForm['total']) : 0;
+            $manualPricePerNight = isset($this->rentForm['manual_price_per_night'])
+                ? (float)($this->rentForm['manual_price_per_night'])
+                : 0;
             
             if ($manualTotal > 0) {
                 // âœ… PRECIO MANUAL ES SSOT: usar directamente el valor del formulario
-                $totalAmount = $manualTotal;
-                // Calcular pricePerNight retroactivamente para logging (no para persistencia)
-                $pricePerNight = $nights > 0 ? ($totalAmount / $nights) : $totalAmount;
+                $totalAmount = round($manualTotal, 2);
+                $pricePerNight = $manualPricePerNight > 0
+                    ? $manualPricePerNight
+                    : ($nights > 0 ? round($totalAmount / $nights, 2) : $totalAmount);
                 
                 \Log::info('QuickRent: Using manual price from form (SSOT)', [
                     'room_id' => $room->id,
                     'manual_total' => $manualTotal,
                     'nights' => $nights,
-                    'calculated_price_per_night' => $pricePerNight,
+                    'manual_price_per_night' => $manualPricePerNight,
+                    'effective_price_per_night' => $pricePerNight,
                 ]);
             } else {
                 // ===== OPCIÓN 2: CÁLCULO AUTOMÁTICO DESDE TARIFAS (FALLBACK) =====
                 // Si NO hay precio manual, calcular desde tarifas del sistema
                 $pricePerNight = $this->findRateForGuests($room, $guests);
-                $totalAmount = $pricePerNight * $nights;
+                $totalAmount = round($pricePerNight * $nights, 2);
                 
                 \Log::info('QuickRent: Using calculated price from rates (fallback)', [
                     'room_id' => $room->id,
