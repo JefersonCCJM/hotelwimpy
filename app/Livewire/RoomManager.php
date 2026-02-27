@@ -1865,6 +1865,7 @@ class RoomManager extends Component
                     }
                 }
 
+                $this->normalizeReservationStayNightTotals($activeReservation);
                 $this->syncStayNightsPaymentCoverage($activeReservation);
             } catch (\Exception $e) {
                 // No crítico, solo log
@@ -2405,6 +2406,8 @@ class RoomManager extends Component
         if (!$reservation) return;
 
         try {
+            $this->ensureStayNightsCoverageForReservation($reservation);
+            $this->normalizeReservationStayNightTotals($reservation);
             $this->syncStayNightsPaymentCoverage($reservation);
             $reservation->refresh()->load(['payments', 'sales']);
         } catch (\Exception $e) {
@@ -2452,6 +2455,9 @@ class RoomManager extends Component
             if (!$reservation) {
                 return null;
             }
+
+            $this->ensureStayNightsCoverageForReservation($reservation);
+            $this->normalizeReservationStayNightTotals($reservation);
 
             $paymentsTotal = (float)($reservation->payments()->sum('amount') ?? 0);
             $salesDebt = (float)($reservation->sales?->where('is_paid', false)->sum('total') ?? 0);
@@ -3114,6 +3120,7 @@ class RoomManager extends Component
             }
 
             $this->ensureStayNightsCoverageForReservation($reservation);
+            $this->normalizeReservationStayNightTotals($reservation);
 
             // Validar método de pago
             $paymentMethod = (string)$paymentMethod;
@@ -3522,6 +3529,117 @@ class RoomManager extends Component
                 $this->ensureNightForDate($stay, $cursor->copy());
             }
         }
+    }
+
+    /**
+     * Corrige desalineaciones legacy entre subtotal contractual y suma de stay_nights.
+     * Caso típico histórico: noches calculadas con 1 día menos y precio por noche inflado.
+     */
+    private function normalizeReservationStayNightTotals(Reservation $reservation): void
+    {
+        $reservation->loadMissing(['reservationRooms']);
+
+        foreach ($reservation->reservationRooms as $reservationRoom) {
+            $this->normalizeStayNightPricesForReservationRoom($reservation, $reservationRoom);
+        }
+    }
+
+    /**
+     * Normaliza precios por noche para que la suma del rango coincida con el subtotal contractual.
+     * Solo auto-corrige cuando detecta patrón legacy seguro (precios uniformes o sin noches pagadas).
+     */
+    private function normalizeStayNightPricesForReservationRoom(
+        Reservation $reservation,
+        ReservationRoom $reservationRoom
+    ): void {
+        if (empty($reservationRoom->check_in_date) || empty($reservationRoom->check_out_date)) {
+            return;
+        }
+
+        $roomId = (int) ($reservationRoom->room_id ?? 0);
+        if ($roomId <= 0) {
+            return;
+        }
+
+        $checkIn = Carbon::parse((string) $reservationRoom->check_in_date)->startOfDay();
+        $checkOut = Carbon::parse((string) $reservationRoom->check_out_date)->startOfDay();
+        if (!$checkOut->gt($checkIn)) {
+            return;
+        }
+
+        $stayNights = StayNight::query()
+            ->where('reservation_id', $reservation->id)
+            ->where('room_id', $roomId)
+            ->whereDate('date', '>=', $checkIn->toDateString())
+            ->whereDate('date', '<', $checkOut->toDateString())
+            ->orderBy('date')
+            ->orderBy('id')
+            ->get();
+
+        if ($stayNights->isEmpty()) {
+            return;
+        }
+
+        $contractTotal = round((float) ($reservationRoom->subtotal ?? 0), 2);
+        if ($contractTotal <= 0) {
+            // Solo fallback a total_amount cuando la reserva tiene una sola habitación contractual.
+            if ($reservation->reservationRooms->count() === 1) {
+                $contractTotal = round((float) ($reservation->total_amount ?? 0), 2);
+            }
+        }
+
+        if ($contractTotal <= 0) {
+            return;
+        }
+
+        $currentTotal = round((float) $stayNights->sum('price'), 2);
+        if (abs($currentTotal - $contractTotal) <= 0.01) {
+            return;
+        }
+
+        $distinctPriceCount = $stayNights
+            ->map(static fn (StayNight $night) => round((float) ($night->price ?? 0), 2))
+            ->unique()
+            ->count();
+        $hasPaidNights = $stayNights->contains(static fn (StayNight $night) => (bool) ($night->is_paid ?? false));
+
+        if ($distinctPriceCount > 1 && $hasPaidNights) {
+            return;
+        }
+
+        $nightCount = $stayNights->count();
+        if ($nightCount <= 0) {
+            return;
+        }
+
+        $totalCents = (int) round($contractTotal * 100);
+        $baseCents = intdiv($totalCents, $nightCount);
+        $remainderCents = $totalCents - ($baseCents * $nightCount);
+
+        foreach ($stayNights as $index => $night) {
+            $targetCents = $baseCents + ($index < $remainderCents ? 1 : 0);
+            $targetPrice = round($targetCents / 100, 2);
+
+            if (abs((float) ($night->price ?? 0) - $targetPrice) > 0.0001) {
+                $night->update(['price' => $targetPrice]);
+            }
+        }
+
+        $rangeNights = max(1, $checkIn->diffInDays($checkOut));
+        $contractPricePerNight = round($contractTotal / $rangeNights, 2);
+        $reservationRoom->update([
+            'nights' => $rangeNights,
+            'price_per_night' => $contractPricePerNight,
+            'subtotal' => $contractTotal,
+        ]);
+
+        \Log::info('Normalized stay nights total for reservation room', [
+            'reservation_id' => $reservation->id,
+            'room_id' => $roomId,
+            'contract_total' => $contractTotal,
+            'previous_total' => $currentTotal,
+            'night_count' => $nightCount,
+        ]);
     }
 
     /**
@@ -4114,8 +4232,9 @@ class RoomManager extends Component
             $this->rentForm['guests_count'] = $guests;
             $validated['guests_count'] = $guests;
 
-            $checkIn = HotelTime::defaultCheckIn(Carbon::parse($validated['check_in_date']));
-            $checkOut = HotelTime::defaultCheckOut(Carbon::parse($validated['check_out_date']));
+            // Regla hotelera: las noches se calculan por FECHA (check-out exclusivo), no por horas.
+            $checkIn = Carbon::parse((string) $validated['check_in_date'])->startOfDay();
+            $checkOut = Carbon::parse((string) $validated['check_out_date'])->startOfDay();
             $nights = max(1, $checkIn->diffInDays($checkOut));
 
             // ===== CALCULAR TOTAL DEL HOSPEDAJE (SSOT FINANCIERO) =====
@@ -4315,6 +4434,7 @@ class RoomManager extends Component
                 'check_out_date' => $validated['check_out_date'],
                 'nights' => $nights,
                 'price_per_night' => $pricePerNight,
+                'subtotal' => round($totalAmount, 2),
             ]);
 
             // ===== PASO 2.5: Persistir huéspedes adicionales =====
@@ -4344,6 +4464,7 @@ class RoomManager extends Component
             // Sincronizar noches y estado de pago por noches desde el abono inicial.
             try {
                 $this->ensureStayNightsCoverageForReservation($reservation);
+                $this->normalizeReservationStayNightTotals($reservation);
                 $this->syncStayNightsPaymentCoverage($reservation);
             } catch (\Exception $e) {
                 \Log::warning('Quick Rent: Error syncing stay nights payment coverage', [
@@ -5555,6 +5676,15 @@ class RoomManager extends Component
 
             // ðŸ” RECALCULAR TODA LA DEUDA REAL DESDE SSOT
             $reservation->load(['payments', 'sales']);
+            try {
+                $this->ensureStayNightsCoverageForReservation($reservation);
+                $this->normalizeReservationStayNightTotals($reservation);
+            } catch (\Exception $e) {
+                \Log::warning('Release Room: unable to normalize stay nights before debt check', [
+                    'reservation_id' => $reservation->id,
+                    'error' => $e->getMessage(),
+                ]);
+            }
             
             // âœ… NUEVO SSOT: Total del hospedaje desde stay_nights
             try {
