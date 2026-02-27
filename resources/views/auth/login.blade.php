@@ -3,14 +3,14 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Iniciar Sesión - Hotel San Pedro</title>
+    <title>Iniciar Sesión - Hotel Wimpy</title>
     <link rel="icon" type="image/png" href="{{ asset('assets/img/backgrounds/logo-Photoroom.png') }}">
     
     {{-- SEO Meta Tags --}}
-    <meta name="title" content="Iniciar Sesión - Hotel San Pedro">
-    <meta name="description" content="Accede al sistema de gestión hotelera de Hotel San Pedro. Administra reservaciones, habitaciones, inventario y facturación electrónica.">
-    <meta name="keywords" content="hotel, gestión hotelera, reservaciones, sistema hotelero, Hotel San Pedro">
-    <meta name="author" content="Hotel San Pedro">
+    <meta name="title" content="Iniciar Sesión - Hotel Wimpy">
+    <meta name="description" content="Accede al sistema de gestión hotelera de Hotel Wimpy. Administra reservaciones, habitaciones, inventario y facturación electrónica.">
+    <meta name="keywords" content="hotel, gestión hotelera, reservaciones, sistema hotelero, Hotel Wimpy">
+    <meta name="author" content="Hotel Wimpy">
     <meta name="robots" content="index, follow">
     
     <!-- TailwindCSS -->
