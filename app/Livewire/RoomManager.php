@@ -115,7 +115,19 @@ class RoomManager extends Component
     {
         if ($this->rentForm) {
             $this->rentForm['deposit'] = 0;
+            $this->resetQuickRentTransferFields();
         }
+    }
+
+    private function resetQuickRentTransferFields(): void
+    {
+        if (! $this->rentForm) {
+            return;
+        }
+
+        $this->rentForm['payment_method'] = 'efectivo';
+        $this->rentForm['bank_name'] = '';
+        $this->rentForm['reference'] = '';
     }
 
     /**
@@ -4457,6 +4469,44 @@ class RoomManager extends Component
 
         if ((float)($this->rentForm['deposit'] ?? 0) > $total) {
             $this->rentForm['deposit'] = $total;
+        }
+
+        if ((float) ($this->rentForm['deposit'] ?? 0) <= 0) {
+            $this->resetQuickRentTransferFields();
+        }
+    }
+
+    public function updatedRentFormDeposit($value): void
+    {
+        if (! $this->rentForm) {
+            return;
+        }
+
+        $total = (float) ($this->rentForm['total'] ?? 0);
+        $deposit = is_numeric($value) ? round(max(0, (float) $value), 2) : 0.0;
+
+        if ($total > 0 && $deposit > $total) {
+            $deposit = $total;
+        }
+
+        $this->rentForm['deposit'] = $deposit;
+
+        if ($deposit <= 0) {
+            $this->resetQuickRentTransferFields();
+        }
+    }
+
+    public function updatedRentFormPaymentMethod($value): void
+    {
+        if (! $this->rentForm) {
+            return;
+        }
+
+        $this->rentForm['payment_method'] = (string) $value;
+
+        if ($this->rentForm['payment_method'] !== 'transferencia') {
+            $this->rentForm['bank_name'] = '';
+            $this->rentForm['reference'] = '';
         }
     }
 
