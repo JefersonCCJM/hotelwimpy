@@ -96,7 +96,6 @@
                                     </p>
                                 @endif
                                 </div>
-                            @endif
                             <div class="space-y-1.5">
                                 <label
                                     class="text-[10px] font-bold text-gray-400 uppercase tracking-widest ml-1">CHECK-OUT</label>
