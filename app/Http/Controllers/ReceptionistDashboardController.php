@@ -973,7 +973,7 @@ class ReceptionistDashboardController extends Controller
             )
             ->with(
                 "success",
-                "Turno entregado correctamente. Pendiente de recepciÃƒÂ³n por el siguiente turno.",
+                "Turno entregado correctamente. Pendiente de recepción por el siguiente turno.",
             );
 
     }

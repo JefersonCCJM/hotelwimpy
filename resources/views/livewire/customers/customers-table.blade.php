@@ -1,4 +1,4 @@
-<div>
+<div id="customers-table">
     <!-- Filtros -->
     <div class="bg-white rounded-xl border border-gray-100 p-4 sm:p-6">
         <div class="space-y-4">
@@ -351,21 +351,8 @@
 
         <!-- Paginación Desktop -->
         @if ($customers->hasPages())
-            <div class="bg-white px-6 py-4 border-t border-gray-100">
-                <div class="flex items-center justify-between">
-                    <div class="text-sm text-gray-600">
-                        Mostrando
-                        <span class="font-semibold text-gray-900">{{ $customers->firstItem() }}</span>
-                        a
-                        <span class="font-semibold text-gray-900">{{ $customers->lastItem() }}</span>
-                        de
-                        <span class="font-semibold text-gray-900">{{ $customers->total() }}</span>
-                        {{ $customers->total() === 1 ? 'cliente' : 'clientes' }}
-                    </div>
-                    <div class="flex-1">
-                        {{ $customers->links() }}
-                    </div>
-                </div>
+            <div class="border-t border-gray-100 bg-gradient-to-r from-white via-white to-emerald-50/70 px-4 py-5 sm:px-6">
+                {{ $customers->links('livewire.customers.partials.pagination', ['scrollTo' => '#customers-table']) }}
             </div>
         @endif
     </div>
@@ -570,17 +557,9 @@
 
         <!-- Paginación Mobile -->
         @if ($customers->hasPages())
-            <div class="bg-white rounded-xl border border-gray-100 p-4">
-                <div class="text-center text-sm text-gray-600 mb-3">
-                    Mostrando
-                    <span class="font-semibold text-gray-900">{{ $customers->firstItem() }}</span>
-                    a
-                    <span class="font-semibold text-gray-900">{{ $customers->lastItem() }}</span>
-                    de
-                    <span class="font-semibold text-gray-900">{{ $customers->total() }}</span>
-                    {{ $customers->total() === 1 ? 'cliente' : 'clientes' }}
-                </div>
-                {{ $customers->links() }}
+            <div
+                class="rounded-xl border border-gray-100 bg-gradient-to-br from-white via-white to-emerald-50/80 p-4 sm:p-5">
+                {{ $customers->links('livewire.customers.partials.pagination', ['scrollTo' => '#customers-table']) }}
             </div>
         @endif
     </div>
