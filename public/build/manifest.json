@@ -1,0 +1,32 @@
+{
+  "resources/css/app.css": {
+    "file": "assets/app-Di82OH7T.css",
+    "src": "resources/css/app.css",
+    "isEntry": true,
+    "name": "app",
+    "names": [
+      "app.css"
+    ]
+  },
+  "resources/css/reports-manager.css": {
+    "file": "assets/reports-manager-DLbU2OKh.css",
+    "src": "resources/css/reports-manager.css",
+    "isEntry": true,
+    "name": "reports-manager",
+    "names": [
+      "reports-manager.css"
+    ]
+  },
+  "resources/js/app.js": {
+    "file": "assets/app-CKl8NZMC.js",
+    "name": "app",
+    "src": "resources/js/app.js",
+    "isEntry": true
+  },
+  "resources/js/reports-manager.js": {
+    "file": "assets/reports-manager-D8klmWfr.js",
+    "name": "reports-manager",
+    "src": "resources/js/reports-manager.js",
+    "isEntry": true
+  }
+}

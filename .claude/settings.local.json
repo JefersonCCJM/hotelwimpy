@@ -15,7 +15,8 @@
       "Bash(php:*)",
       "Bash(node:*)",
       "Bash(python3:*)",
-      "Bash(python:*)"
+      "Bash(python:*)",
+      "Bash(npm run build)"
     ]
   }
 }
