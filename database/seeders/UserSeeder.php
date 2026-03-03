@@ -20,7 +20,7 @@ class UserSeeder extends Seeder
         // Usuario administrador (safe - won't duplicate if exists)
         $adminData = [
             'name' => 'Administrador',
-            'password' => Hash::make('Hotel-Wimpy-Administracion-2025#'),
+            'password' => Hash::make('Hotel-Wimpy-Administracion-2026#'),
             'security_pin' => '1234',
         ];
 
@@ -40,7 +40,7 @@ class UserSeeder extends Seeder
         // Usuario recepcionista día (alineado al dominio hotelero)
         $receptionistData = [
             'name' => 'RecepcionistaDia',
-            'password' => Hash::make('Recepcionista2025#'),
+            'password' => Hash::make('Recepcionista2026#'),
             'security_pin' => '0000',
             'working_hours' => ['start' => '06:00', 'end' => '14:00'],
         ];
@@ -61,7 +61,7 @@ class UserSeeder extends Seeder
         // Usuario recepcionista noche
         $nightData = [
             'name' => 'RecepcionistaNocturno',
-            'password' => Hash::make('Noche2025#'),
+            'password' => Hash::make('Noche2026#'),
             'security_pin' => '1111',
             'working_hours' => ['start' => '22:00', 'end' => '06:00'],
         ];
