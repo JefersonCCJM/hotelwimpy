@@ -1,4 +1,4 @@
-# Guía de IA — Hotel San Pedro
+# Guía de IA — Hotel Wimpy
 
 > **Para cualquier agente de IA** que trabaje en este proyecto (Claude, Copilot, Cursor, GPT, Gemini, etc.).
 > Este archivo se llama `CLAUDE.md` porque Claude Code lo requiere con ese nombre para leerlo automáticamente,

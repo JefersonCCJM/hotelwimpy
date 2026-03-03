@@ -1,4 +1,4 @@
-# Checklist de Limpieza y Adaptación del Proyecto Hotel San Pedro
+# Checklist de Limpieza y Adaptación del Proyecto Hotel Wimpy
 
 ## ✅ FASE 1: ELIMINACIÓN DE MÓDULOS NO APLICABLES
 

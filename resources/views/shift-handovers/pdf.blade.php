@@ -59,11 +59,11 @@
             <tr>
                 <td class="logo-cell">
                     @if($logoDataUri)
-                        <img src="{{ $logoDataUri }}" alt="Hotel San Pedro" class="logo">
+                        <img src="{{ $logoDataUri }}" alt="Hotel Wimpy" class="logo">
                     @endif
                 </td>
                 <td>
-                    <p class="brand">Hotel San Pedro</p>
+                    <p class="brand">Hotel Wimpy</p>
                     <p class="doc-title">Detalle de Turno #{{ $handover->id }}</p>
                     <p class="doc-subtitle">
                         Fecha: {{ $handover->shift_date->format('d/m/Y') }}

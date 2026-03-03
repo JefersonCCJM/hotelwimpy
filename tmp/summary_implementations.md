@@ -1,4 +1,4 @@
-# Resumen de Implementaciones - Proyecto Hotel San Pedro
+# Resumen de Implementaciones - Proyecto Hotel Wimpy
 
 Este documento detalla las correcciones, mejoras y adaptaciones realizadas para transformar el sistema de ventas original en un sistema de gestión hotelera robusto y funcional.
 

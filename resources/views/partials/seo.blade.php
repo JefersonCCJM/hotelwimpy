@@ -2,10 +2,10 @@
 {{-- Usage: @include('partials.seo', ['title' => 'Page Title', 'description' => 'Page description']) --}}
 
 @php
-    $appName = config('app.name', 'Hotel San Pedro');
+    $appName = config('app.name', 'Hotel Wimpy');
     $pageTitle = isset($title) ? $title . ' - ' . $appName : $appName . ' - Sistema de Gestión Hotelera';
-    $pageDescription = $description ?? 'Sistema integral de gestión hotelera para Hotel San Pedro. Administra reservaciones, habitaciones, inventario y facturación electrónica de manera eficiente.';
-    $pageKeywords = $keywords ?? 'hotel, gestión hotelera, reservaciones, sistema hotelero, Hotel San Pedro, administración hotelera, facturación electrónica';
+    $pageDescription = $description ?? 'Sistema integral de gestión hotelera para Hotel Wimpy. Administra reservaciones, habitaciones, inventario y facturación electrónica de manera eficiente.';
+    $pageKeywords = $keywords ?? 'hotel, gestión hotelera, reservaciones, sistema hotelero, Hotel Wimpy, administración hotelera, facturación electrónica';
     $pageUrl = url()->current();
     $pageImage = $image ?? asset('assets/img/backgrounds/login-bg.jpeg');
 @endphp
@@ -14,7 +14,7 @@
 <meta name="title" content="{{ $pageTitle }}">
 <meta name="description" content="{{ $pageDescription }}">
 <meta name="keywords" content="{{ $pageKeywords }}">
-<meta name="author" content="Hotel San Pedro">
+<meta name="author" content="Hotel Wimpy">
 <meta name="robots" content="index, follow">
 <meta name="language" content="Spanish">
 

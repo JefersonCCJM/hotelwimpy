@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <meta name="csrf-token" content="{{ csrf_token() }}">
-    <title>Panel de Aseo - Hotel San Pedro</title>
+    <title>Panel de Aseo - Hotel Wimpy</title>
     <link rel="icon" type="image/png" href="{{ asset('assets/img/backgrounds/logo-Photoroom.png') }}">
     
     <!-- TailwindCSS -->

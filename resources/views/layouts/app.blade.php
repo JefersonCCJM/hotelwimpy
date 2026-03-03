@@ -5,14 +5,14 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <meta name="google" content="notranslate">
-    <title>@yield('title', 'Hotel San Pedro') - Sistema de Gestion</title>
+    <title>@yield('title', 'Hotel Wimpy') - Sistema de Gestion</title>
     <meta name="csrf-token" content="{{ csrf_token() }}">
     <link rel="icon" type="image/png" href="{{ asset('assets/img/backgrounds/logo-Photoroom.png') }}">
 
     @include('partials.seo', [
         'title' => View::yieldContent('title', 'Dashboard'),
         'description' =>
-            'Sistema de gestion hotelera de Hotel San Pedro. Administra reservaciones, habitaciones, inventario y facturacion electronica de manera eficiente.',
+            'Sistema de gestion hotelera de Hotel Wimpy. Administra reservaciones, habitaciones, inventario y facturacion electronica de manera eficiente.',
     ])
 
     <!-- TailwindCSS -->
@@ -68,9 +68,9 @@
             :class="sidebarOpen ? 'translate-x-0 w-[260px]' : '-translate-x-full w-[260px] lg:translate-x-0 lg:w-0'">
             <div class="flex items-center justify-between p-4 lg:justify-center">
                 <div class="flex flex-col items-center">
-                    <img src="{{ asset('assets/img/backgrounds/logo-Photoroom.png') }}" alt="Hotel San Pedro"
+                    <img src="{{ asset('assets/img/backgrounds/logo-Photoroom.png') }}" alt="Hotel Wimpy"
                         class="h-12 w-auto object-contain mb-2">
-                    <h1 class="text-xl lg:text-2xl font-bold text-center">Hotel San Pedro</h1>
+                    <h1 class="text-xl lg:text-2xl font-bold text-center">Hotel Wimpy</h1>
                     <p class="text-gray-400 text-xs lg:text-sm text-center">Sistema de Gestion</p>
                 </div>
                 <button @click="if (window.innerWidth < 1024) sidebarOpen = false" class="lg:hidden text-gray-400 hover:text-white">

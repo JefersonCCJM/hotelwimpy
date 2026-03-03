@@ -35,7 +35,7 @@
 </head>
 <body>
     <div class="header">
-        <h1 class="title">Hotel San Pedro</h1>
+        <h1 class="title">Hotel Wimpy</h1>
         <p class="subtitle">Comprobante de Reserva</p>
         <p class="subtitle">Fecha de emision: {{ ($issuedAt ?? now())->format('d/m/Y H:i') }}</p>
     </div>

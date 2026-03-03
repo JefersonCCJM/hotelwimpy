@@ -121,7 +121,7 @@
     @endif
 
     <div class="footer">
-        Hotel San Pedro - Sistema de Gestión Forense de Datos<br>
+        Hotel Wimpy - Sistema de Gestión Forense de Datos<br>
         Este documento es un extracto fidedigno de los registros del sistema a la fecha de generación.
     </div>
 </body>

@@ -39,11 +39,11 @@
             <tr>
                 <td class="logo-cell">
                     @if($logoDataUri)
-                        <img src="{{ $logoDataUri }}" alt="Hotel San Pedro" class="logo">
+                        <img src="{{ $logoDataUri }}" alt="Hotel Wimpy" class="logo">
                     @endif
                 </td>
                 <td>
-                    <p class="brand">Hotel San Pedro</p>
+                    <p class="brand">Hotel Wimpy</p>
                     <p class="doc-title">Reporte de {{ $entityTypeLabel }}</p>
                     <p class="doc-subtitle">
                         Periodo:
@@ -168,7 +168,7 @@
     @endif
 
     <div class="footer">
-        Hotel San Pedro - Sistema de Gestion
+        Hotel Wimpy - Sistema de Gestion
     </div>
 </body>
 </html>

@@ -20,7 +20,7 @@ class UserSeeder extends Seeder
         // Usuario administrador (safe - won't duplicate if exists)
         $adminData = [
             'name' => 'Administrador',
-            'password' => Hash::make('Hotel-San-Pedro-Administracion-2025#'),
+            'password' => Hash::make('Hotel-Wimpy-Administracion-2025#'),
             'security_pin' => '1234',
         ];
 
@@ -29,7 +29,7 @@ class UserSeeder extends Seeder
         }
 
         $admin = User::updateOrCreate(
-            ['email' => 'admin@hotel-san-pedro.com'],
+            ['email' => 'admin@hotel-wimpy.com'],
             $adminData
         );
         

@@ -1,6 +1,6 @@
 # Análisis del Flujo de Estados en el Módulo de Habitaciones
 
-**Proyecto:** Hotel San Pedro  
+**Proyecto:** Hotel Wimpy  
 **Stack:** Laravel 12 + Livewire v3  
 **Fecha:** 2025-01-27  
 **Objetivo:** Explicar técnicamente cómo se determina y muestra el estado de las habitaciones desde la base de datos hasta la UI.

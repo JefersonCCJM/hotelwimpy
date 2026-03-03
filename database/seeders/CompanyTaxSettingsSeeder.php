@@ -132,10 +132,10 @@ class CompanyTaxSettingsSeeder extends Seeder
         $this->command->info('📝 Creando configuración fiscal de ejemplo para desarrollo...');
         
         $exampleData = [
-            'company_name' => 'HOTEL SAN PEDRO S.A.S.',
+            'company_name' => 'HOTEL WIMPY S.A.S.',
             'nit' => '900123456',
             'dv' => '7',
-            'email' => 'contacto@hotelsanpedro.com',
+            'email' => 'contacto@hotelwimpy.com',
             'municipality_id' => 1, // Bogotá por defecto
             'economic_activity' => 5510, // Hoteles
             'logo_url' => null,

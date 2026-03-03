@@ -27,7 +27,7 @@
 </head>
 <body>
     <div class="header">
-        <p class="title">HOTEL SAN PEDRO</p>
+        <p class="title">HOTEL WIMPY</p>
         <p class="subtitle">Reporte de Reservas</p>
         <p class="subtitle">
             Desde {{ $startDate->locale('es')->isoFormat('D [de] MMMM [de] YYYY') }}
@@ -131,6 +131,6 @@
         @endif
     </table>
 
-    <p class="footer">Documento generado automaticamente por el sistema Hotel San Pedro.</p>
+    <p class="footer">Documento generado automaticamente por el sistema Hotel Wimpy.</p>
 </body>
 </html>

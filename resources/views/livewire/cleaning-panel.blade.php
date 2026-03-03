@@ -16,7 +16,7 @@
             <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
                 <div class="flex items-center space-x-4">
                     <div class="flex-shrink-0">
-                        <img src="{{ asset('assets/img/backgrounds/logo-Photoroom.png') }}" alt="Hotel San Pedro Suite" class="h-16 w-auto object-contain">
+                        <img src="{{ asset('assets/img/backgrounds/logo-Photoroom.png') }}" alt="Hotel Wimpy Suite" class="h-16 w-auto object-contain">
                     </div>
                     <div>
                         <h1 class="text-3xl sm:text-4xl font-black text-gray-900 leading-tight">Panel de Aseo</h1>

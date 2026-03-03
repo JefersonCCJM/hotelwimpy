@@ -1,6 +1,6 @@
-# Hotel San Pedro - Sistema de Gestión Hotelera
+# Hotel Wimpy - Sistema de Gestión Hotelera
 
-Sistema web desarrollado en Laravel 12 para la gestión integral del Hotel San Pedro.
+Sistema web desarrollado en Laravel 12 para la gestión integral del Hotel Wimpy.
 
 ## 📋 Estado del Proyecto según Cronograma
 

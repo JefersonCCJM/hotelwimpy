@@ -1,4 +1,4 @@
-# Plan: Módulo de Ventas - Hotel San Pedro
+# Plan: Módulo de Ventas - Hotel Wimpy
 
 ## Estado Actual
 - Existe `reservation_sales` para ventas relacionadas con reservas

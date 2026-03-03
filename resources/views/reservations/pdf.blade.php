@@ -45,11 +45,11 @@
             <tr>
                 <td class="logo-cell">
                     @if($logoDataUri)
-                        <img src="{{ $logoDataUri }}" alt="Hotel San Pedro" class="logo">
+                        <img src="{{ $logoDataUri }}" alt="Hotel Wimpy" class="logo">
                     @endif
                 </td>
                 <td>
-                    <p class="brand">Hotel San Pedro</p>
+                    <p class="brand">Hotel Wimpy</p>
                     <p class="doc-title">Comprobante de Reserva</p>
                     <p class="doc-subtitle">Codigo: {{ $reservation->reservation_code ?? ('RES-' . $reservation->id) }}</p>
                 </td>
