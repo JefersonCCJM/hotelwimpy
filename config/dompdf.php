@@ -1,23 +1,5 @@
 <?php
 
-// Fix for shared hosting: calculate public_path before config array
-// In Hostinger, Laravel is in /laravel and public_html is at the same level
-$basePath = function_exists('base_path') ? base_path() : dirname(__DIR__);
-$publicHtmlPath = dirname($basePath) . DIRECTORY_SEPARATOR . 'public_html';
-
-$dompdfPublicPath = null;
-if (is_dir($publicHtmlPath)) {
-    $dompdfPublicPath = realpath($publicHtmlPath);
-} else {
-    // Fallback to standard Laravel structure
-    $publicPath = $basePath . DIRECTORY_SEPARATOR . 'public';
-    if (is_dir($publicPath)) {
-        $dompdfPublicPath = realpath($publicPath);
-    } else {
-        $dompdfPublicPath = $publicHtmlPath;
-    }
-}
-
 return [
 
     /*
@@ -30,7 +12,7 @@ return [
     |
     */
     'show_warnings' => false,   // Throw an Exception on warnings from dompdf
-    'public_path' => $dompdfPublicPath,  // Override the public path for shared hosting
+    'public_path' => null,      // Use Laravel's default public_path()
 
     /*
      * Dejavu Sans font is missing glyphs for converted entities, turn it off if you need to see € and £.
@@ -239,4 +221,3 @@ return [
     ],
 
 ];
-

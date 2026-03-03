@@ -26,7 +26,6 @@ return Application::configure(basePath: dirname(__DIR__))
         },
     )
     ->withProviders([
-        \App\Providers\PublicPathServiceProvider::class,
         Spatie\Permission\PermissionServiceProvider::class,
         \Illuminate\Auth\AuthServiceProvider::class,
         \Illuminate\Broadcasting\BroadcastServiceProvider::class,
