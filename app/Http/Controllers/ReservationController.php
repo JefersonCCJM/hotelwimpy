@@ -2414,7 +2414,6 @@ class ReservationController extends Controller
      */
     private function findRateForGuests(Room $room, int $guests): float
     {
-        // Validar entrada
         if ($guests <= 0) {
             \Log::warning('findRateForGuests: Invalid guests count', ['guests' => $guests, 'room_id' => $room->id]);
             return (float)($room->base_price_per_night ?? 0);
@@ -2422,13 +2421,10 @@ class ReservationController extends Controller
 
         $rates = $room->rates;
 
-        // Si hay tarifas configuradas, buscar coincidencia exacta
         if ($rates && $rates->isNotEmpty()) {
-            foreach ($rates as $rate) {
+            $validRates = $rates->filter(function ($rate) use ($room) {
                 $min = (int)($rate->min_guests ?? 0);
                 $max = (int)($rate->max_guests ?? 0);
-                
-                // Validar que min y max sean valores válidos
                 if ($min <= 0 || $max <= 0) {
                     \Log::warning('findRateForGuests: Invalid rate range', [
                         'rate_id' => $rate->id,
@@ -2436,31 +2432,70 @@ class ReservationController extends Controller
                         'max_guests' => $rate->max_guests,
                         'room_id' => $room->id,
                     ]);
-                    continue; // Saltar tarifa inválida
+                    return false;
                 }
-                
-                // Coincidencia: guests está dentro del rango [min, max]
-                if ($guests >= $min && $guests <= $max) {
-                    $price = (float)($rate->price_per_night ?? 0);
-                    if ($price > 0) {
-                        \Log::info('findRateForGuests: Rate found', [
-                            'room_id' => $room->id,
-                            'guests' => $guests,
-                            'rate_id' => $rate->id,
-                            'min' => $min,
-                            'max' => $max,
-                            'price_per_night' => $price,
-                        ]);
-                        return $price;
-                    }
+
+                return (float)($rate->price_per_night ?? 0) > 0;
+            });
+
+            $matchingRates = $validRates->filter(function ($rate) use ($guests) {
+                $min = (int)($rate->min_guests ?? 0);
+                $max = (int)($rate->max_guests ?? 0);
+                return $guests >= $min && $guests <= $max;
+            });
+
+            if ($matchingRates->isNotEmpty()) {
+                $exactMatches = $matchingRates->filter(function ($rate) use ($guests) {
+                    return (int)($rate->min_guests ?? 0) === $guests
+                        && (int)($rate->max_guests ?? 0) === $guests;
+                });
+
+                if ($exactMatches->count() > 1) {
+                    \Log::warning('findRateForGuests: Duplicate exact rates detected', [
+                        'room_id' => $room->id,
+                        'guests' => $guests,
+                        'rate_ids' => $exactMatches->pluck('id')->values()->toArray(),
+                    ]);
+                }
+
+                $selectedRate = null;
+                if ($exactMatches->isNotEmpty()) {
+                    $selectedRate = $exactMatches
+                        ->sortByDesc(fn($rate) => (int)($rate->id ?? 0))
+                        ->first();
+                } else {
+                    $selectedRate = $matchingRates
+                        ->sort(function ($a, $b) {
+                            $aWidth = max(0, (int)($a->max_guests ?? 0) - (int)($a->min_guests ?? 0));
+                            $bWidth = max(0, (int)($b->max_guests ?? 0) - (int)($b->min_guests ?? 0));
+
+                            if ($aWidth === $bWidth) {
+                                return (int)($b->id ?? 0) <=> (int)($a->id ?? 0);
+                            }
+
+                            return $aWidth <=> $bWidth;
+                        })
+                        ->first();
+                }
+
+                if ($selectedRate) {
+                    $selectedPrice = (float)($selectedRate->price_per_night ?? 0);
+                    \Log::info('findRateForGuests: Rate selected', [
+                        'room_id' => $room->id,
+                        'guests' => $guests,
+                        'rate_id' => $selectedRate->id,
+                        'min' => (int)($selectedRate->min_guests ?? 0),
+                        'max' => (int)($selectedRate->max_guests ?? 0),
+                        'price_per_night' => $selectedPrice,
+                    ]);
+                    return $selectedPrice;
                 }
             }
-            
-            // No se encontró tarifa coincidente
+
             \Log::warning('findRateForGuests: No matching rate found', [
                 'room_id' => $room->id,
                 'guests' => $guests,
-                'available_rates' => $rates->map(fn($r) => [
+                'available_rates' => $validRates->map(fn($r) => [
                     'id' => $r->id,
                     'min' => $r->min_guests,
                     'max' => $r->max_guests,
@@ -2474,7 +2509,6 @@ class ReservationController extends Controller
             ]);
         }
 
-        // Fallback: usar base_price_per_night
         $basePrice = (float)($room->base_price_per_night ?? 0);
         if ($basePrice > 0) {
             \Log::info('findRateForGuests: Using base_price fallback', [
@@ -2485,7 +2519,6 @@ class ReservationController extends Controller
             return $basePrice;
         }
 
-        // Último recurso: precio por defecto 0 (será detectado por validación)
         \Log::error('findRateForGuests: No price found', [
             'room_id' => $room->id,
             'guests' => $guests,

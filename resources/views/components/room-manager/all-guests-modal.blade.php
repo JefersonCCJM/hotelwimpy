@@ -3,11 +3,6 @@
 @if ($allGuestsForm)
     <div x-data="{
         show: @entangle('allGuestsModal'),
-        addingGuest: false,
-        canEdit: @js((bool) ($allGuestsForm['can_edit'] ?? true)),
-        newGuestName: '',
-        newGuestIdentification: '',
-        newGuestPhone: '',
         maxCapacity: {{ $allGuestsForm['max_capacity'] ?? 4 }},
         currentGuestCount: {{ count($allGuestsForm['guests'] ?? []) }},
         init() {
@@ -24,76 +19,9 @@
                 (count) => {
                     if (count !== undefined) {
                         this.currentGuestCount = count;
-                        // Cerrar formulario automáticamente si se alcanzó la capacidad
-                        if (count >= this.maxCapacity) {
-                            this.addingGuest = false;
-                        }
                     }
                 }
             );
-        },
-        get canAddGuest() {
-            return this.currentGuestCount < this.maxCapacity;
-        },
-        get remainingCapacity() {
-            return this.maxCapacity - this.currentGuestCount;
-        },
-        startAddingGuest() {
-            if (!this.canEdit) {
-                window.dispatchEvent(new CustomEvent('notify', {
-                    detail: { type: 'error', message: 'No se puede editar información de fechas pasadas.' }
-                }));
-                return;
-            }
-    
-            if (!this.canAddGuest) {
-                window.dispatchEvent(new CustomEvent('notify', {
-                    detail: { type: 'error', message: 'Capacidad máxima alcanzada' }
-                }));
-                return;
-            }
-            this.addingGuest = true;
-            this.newGuestName = '';
-            this.newGuestIdentification = '';
-            this.newGuestPhone = '';
-        },
-        cancelAddingGuest() {
-            this.addingGuest = false;
-            this.newGuestName = '';
-            this.newGuestIdentification = '';
-            this.newGuestPhone = '';
-        },
-        saveGuest() {
-            if (!this.canEdit) {
-                window.dispatchEvent(new CustomEvent('notify', {
-                    detail: { type: 'error', message: 'No se puede editar información de fechas pasadas.' }
-                }));
-                return;
-            }
-    
-            if (!this.newGuestName.trim()) {
-                window.dispatchEvent(new CustomEvent('notify', {
-                    detail: { type: 'error', message: 'El nombre del huésped es requerido' }
-                }));
-                return;
-            }
-    
-            $wire.call('addGuestToRoom', {
-                reservation_id: $wire.allGuestsForm.reservation_id,
-                room_id: $wire.allGuestsForm.room_id,
-                name: this.newGuestName,
-                identification: this.newGuestIdentification,
-                phone: this.newGuestPhone
-            }).then(() => {
-                this.addingGuest = false;
-                this.newGuestName = '';
-                this.newGuestIdentification = '';
-                this.newGuestPhone = '';
-            }).catch(() => {
-                window.dispatchEvent(new CustomEvent('notify', {
-                    detail: { type: 'error', message: 'No fue posible agregar el huésped.' }
-                }));
-            });
         },
         close() {
             this.show = false;
@@ -181,101 +109,6 @@
                             <p class="text-gray-500">No hay huéspedes asignados a esta habitación</p>
                         </div>
                     @endif
-
-                    <!-- Botón para agregar huésped -->
-                    <div class="border-t pt-4">
-                        @if (!($allGuestsForm['can_edit'] ?? true))
-                            <div
-                                class="text-center text-xs text-gray-500 bg-gray-50 border border-gray-200 rounded-lg px-3 py-2 mb-3">
-                                Vista historica: solo lectura.
-                            </div>
-                        @endif
-
-                        <div x-show="!addingGuest && canEdit" class="text-center">
-                            <button @click="startAddingGuest()" :disabled="!canAddGuest"
-                                :class="canAddGuest ? 'bg-blue-600 hover:bg-blue-700 text-white' :
-                                    'bg-gray-300 text-gray-500 cursor-not-allowed'"
-                                class="px-4 py-2 rounded-lg font-medium transition-colors flex items-center space-x-2 mx-auto">
-                                <i class="fas fa-user-plus"></i>
-                                <span>Agregar Huésped</span>
-                                <span x-show="!canAddGuest" class="text-xs">(Capacidad máxima alcanzada)</span>
-                            </button>
-                            <div x-show="canAddGuest" class="text-xs text-gray-500 mt-2">
-                                <span x-text="remainingCapacity"></span> plazas disponibles
-                            </div>
-                        </div>
-
-                        <!-- Formulario para agregar huésped (usando Select2 como en assign-guests-modal) -->
-                        <div x-show="addingGuest && canEdit && canAddGuest" class="bg-gray-50 rounded-lg p-4" x-data="{ showGuestSearch: false }">
-                            <h4 class="font-semibold text-gray-900 mb-3">Agregar Huésped Adicional</h4>
-
-                            <div class="space-y-3">
-                                <!-- Opción 1: Buscar cliente existente -->
-                                <div x-show="!showGuestSearch">
-                                    <div class="flex items-center justify-between mb-2">
-                                        <label
-                                            class="text-[10px] font-bold text-gray-700 uppercase tracking-widest">Buscar
-                                            Cliente Existente</label>
-                                        <button type="button" @click="showGuestSearch = true"
-                                            class="text-[9px] font-bold text-blue-600 hover:text-blue-800 uppercase tracking-tighter flex items-center gap-1">
-                                            <i class="fas fa-search text-[8px]"></i>
-                                            Buscar
-                                        </button>
-                                    </div>
-                                    <div class="text-center text-xs text-gray-500 py-4">
-                                        <i class="fas fa-search text-gray-300 text-2xl mb-2"></i>
-                                        <p>Click en "Buscar" para encontrar un cliente existente</p>
-                                    </div>
-                                </div>
-
-                                <!-- Selector de búsqueda (Select2) -->
-                                <div x-show="showGuestSearch" x-transition x-init="setTimeout(() => {
-                                    const event = new CustomEvent('init-all-guests-additional-guest-select');
-                                    document.dispatchEvent(event);
-                                }, 100)"
-                                    class="space-y-2 p-3 bg-white rounded-lg border border-gray-200" x-cloak>
-                                    <div class="flex items-center justify-between mb-2">
-                                        <label
-                                            class="text-[10px] font-bold text-gray-700 uppercase tracking-widest">Buscar
-                                            Cliente</label>
-                                        <button type="button"
-                                            @click="showGuestSearch = false; if (typeof window.allGuestsAdditionalGuestSelect !== 'undefined' && window.allGuestsAdditionalGuestSelect) { window.allGuestsAdditionalGuestSelect.destroy(); window.allGuestsAdditionalGuestSelect = null; }"
-                                            class="text-gray-400 hover:text-gray-600">
-                                            <i class="fas fa-times text-xs"></i>
-                                        </button>
-                                    </div>
-                                    <div wire:ignore>
-                                        <select id="all_guests_additional_guest_customer_id" class="w-full"
-                                            data-reservation-id="{{ $allGuestsForm['reservation_id'] }}"
-                                            data-room-id="{{ $allGuestsForm['room_id'] }}"></select>
-                                    </div>
-                                    <div class="flex gap-2">
-                                        <button type="button"
-                                            @click="showGuestSearch = false; if (typeof window.allGuestsAdditionalGuestSelect !== 'undefined' && window.allGuestsAdditionalGuestSelect) { window.allGuestsAdditionalGuestSelect.destroy(); window.allGuestsAdditionalGuestSelect = null; }"
-                                            class="flex-1 px-3 py-1.5 text-[10px] font-bold text-gray-700 bg-white border border-gray-200 rounded-lg hover:bg-gray-50">
-                                            Cancelar
-                                        </button>
-                                        <button type="button"
-                                            @click="$dispatch('open-create-customer-modal-for-additional'); showGuestSearch = false; if (typeof window.allGuestsAdditionalGuestSelect !== 'undefined' && window.allGuestsAdditionalGuestSelect) { window.allGuestsAdditionalGuestSelect.destroy(); window.allGuestsAdditionalGuestSelect = null; }"
-                                            class="flex-1 px-3 py-1.5 text-[10px] font-bold text-blue-600 bg-blue-50 border border-blue-200 rounded-lg hover:bg-blue-100">
-                                            <i class="fas fa-plus mr-1 text-[8px]"></i>
-                                            Crear Nuevo
-                                        </button>
-                                    </div>
-                                </div>
-                            </div>
-                        </div>
-                    </div>
-
-                    <!-- Footer -->
-                    <div class="bg-gray-50 px-6 py-4 border-t border-gray-200">
-                        <div class="flex justify-end space-x-3">
-                            <button @click="close()"
-                                class="px-4 py-2 bg-gray-200 text-gray-700 rounded-lg hover:bg-gray-300 transition-colors">
-                                Cerrar
-                            </button>
-                        </div>
-                    </div>
                 </div>
             </div>
         </div>

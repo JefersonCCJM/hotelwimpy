@@ -7,8 +7,9 @@
 --}}
     <div class="space-y-6 min-w-0" 
      wire:poll.5s="refreshRoomsPolling"
-     x-data="{ 
+     x-data="{
     quickRentModal: @entangle('quickRentModal'),
+    quickReservationModal: @entangle('quickReservationModal'),
         roomDetailModal: @entangle('roomDetailModal'),
         roomEditModal: @entangle('roomEditModal'),
         createRoomModal: @entangle('createRoomModal'),
@@ -231,10 +232,15 @@
     <x-notifications.payment-modal />
 
     <!-- MODAL: ARRENDAMIENTO RAPIDO -->
-    <x-room-manager.quick-rent-modal 
-        :rentForm="$rentForm" 
-        :additionalGuests="$additionalGuests" 
+    <x-room-manager.quick-rent-modal
+        :rentForm="$rentForm"
+        :additionalGuests="$additionalGuests"
         :checkInDate="$date"
+    />
+
+    <!-- MODAL: RESERVA RAPIDA (con formulario completo) -->
+    <x-room-manager.quick-reservation-modal
+        :quickReservationForm="$quickReservationForm"
     />
 
     <!-- MODAL: CREAR CLIENTE -->

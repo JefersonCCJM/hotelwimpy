@@ -51,9 +51,17 @@ class CustomersTable extends Component
         $query = Customer::query();
 
         if ($this->search) {
-            $query->where('name', 'like', '%' . $this->search . '%')
-                  ->orWhere('email', 'like', '%' . $this->search . '%')
-                  ->orWhere('phone', 'like', '%' . $this->search . '%');
+            $search = trim($this->search);
+
+            $query->where(function ($customerQuery) use ($search) {
+                $customerQuery->where('name', 'like', '%' . $search . '%')
+                    ->orWhere('email', 'like', '%' . $search . '%')
+                    ->orWhere('phone', 'like', '%' . $search . '%')
+                    ->orWhere('identification_number', 'like', '%' . $search . '%')
+                    ->orWhereHas('taxProfile', function ($taxProfileQuery) use ($search) {
+                        $taxProfileQuery->where('identification', 'like', '%' . $search . '%');
+                    });
+            });
         }
 
         if ($this->status) {

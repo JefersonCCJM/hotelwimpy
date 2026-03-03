@@ -97,6 +97,7 @@
 
     $reservationBadgeCode = strtoupper(trim((string) ($reservationBadge->reservation_code ?? '')));
     $hasReservationBadge = str_starts_with($reservationBadgeCode, 'RES-');
+    $isQuickReserved = (bool) ($room->is_quick_reserved ?? false);
 @endphp
 
 <tr
@@ -106,11 +107,13 @@
         // Estado inicial desde BD (Single Source of Truth)
         // Valores permitidos: 'occupied', 'pending_checkout', 'pending_cleaning', 'free_clean'
         operationalStatus: '{{ $operationalStatus }}',
+        quickReserved: @js($isQuickReserved),
         isPastDate: @js($isPastDate),
         // Computed: Determina el estado visual a mostrar
         get displayState() {
             if (this.isReleasing) return 'releasing';
             if (this.recentlyReleased) return 'released';
+            if (this.quickReserved && this.operationalStatus === 'free_clean') return 'quick_reserved';
             return this.operationalStatus;
         },
     }"
@@ -160,10 +163,25 @@
                 }
             });
 
+            window.addEventListener('room-quick-reserve-marked', e => {
+                if (e.detail?.roomId === {{ $room->id }}) {
+                    this.quickReserved = true;
+                    this.recentlyReleased = false;
+                    this.isReleasing = false;
+                }
+            });
+
+            window.addEventListener('room-quick-reserve-cleared', e => {
+                if (e.detail?.roomId === {{ $room->id }}) {
+                    this.quickReserved = false;
+                }
+            });
+
             // Listener: Arriendo confirmado - fuerza sincronizacion inmediata de columnas
             window.addEventListener('room-rented', e => {
                 if (e.detail?.roomId === {{ $room->id }}) {
                     this.operationalStatus = 'occupied';
+                    this.quickReserved = false;
                     this.isReleasing = false;
                     this.recentlyReleased = false;
                 }
@@ -177,6 +195,7 @@
     class="transition-colors duration-150 group"
     :class="{
         'bg-emerald-50': displayState === 'released',
+        'bg-blue-50/60': displayState === 'quick_reserved',
         'bg-red-50/40': displayState === 'occupied',
         'bg-orange-50/30': displayState === 'pending_checkout',
         'bg-yellow-50/30': displayState === 'pending_cleaning',
@@ -204,6 +223,7 @@
                 :class="{
                     'bg-gray-100 text-gray-600': displayState === 'releasing',
                     'bg-emerald-100 text-emerald-700 border border-emerald-200': displayState === 'released',
+                    'bg-blue-100 text-blue-700 border border-blue-200': displayState === 'quick_reserved',
                     'bg-red-100 text-red-700 border border-red-200': displayState === 'occupied',
                     'bg-orange-100 text-orange-700 border border-orange-200': displayState === 'pending_checkout',
                     'bg-yellow-100 text-yellow-700 border border-yellow-200': displayState === 'pending_cleaning',
@@ -215,6 +235,9 @@
                 </template>
                 <template x-if="displayState === 'released'">
                     <span x-transition.opacity><i class="fas fa-check-circle mr-1"></i>Habitacion liberada</span>
+                </template>
+                <template x-if="displayState === 'quick_reserved'">
+                    <span><i class="fas fa-bookmark mr-1"></i>Reservada</span>
                 </template>
                 <template x-if="displayState === 'occupied'">
                     <span>Ocupada</span>
@@ -266,6 +289,8 @@
         @else
             @if($operationalStatus === 'pending_cleaning')
                 <span class="text-xs text-gray-500 italic">Checkout realizado</span>
+            @elseif($isQuickReserved && $operationalStatus === 'free_clean')
+                <span class="text-xs text-blue-700 font-semibold">Reservada sin datos</span>
             @else
                 <span class="text-xs text-gray-400 italic">Sin arrendatario</span>
             @endif
@@ -280,6 +305,11 @@
                 <div class="flex flex-col">
                     <span class="text-xs text-gray-500 font-semibold">Cuenta cerrada</span>
                     <span class="text-[10px] text-gray-400">Marcar como limpia para arrendar</span>
+                </div>
+            @elseif($isQuickReserved && $operationalStatus === 'free_clean')
+                <div class="flex flex-col">
+                    <span class="text-sm font-semibold text-gray-900">${{ number_format($room->base_price_per_night ?? 0, 0, ',', '.') }}</span>
+                    <span class="text-xs text-blue-600">reserva rapida del dia</span>
                 </div>
             @else
                 <div class="flex flex-col">

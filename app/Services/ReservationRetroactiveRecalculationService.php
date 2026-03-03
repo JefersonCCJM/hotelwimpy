@@ -521,6 +521,7 @@ class ReservationRetroactiveRecalculationService
         $remainingCents = (int) round(max(0, (float) Payment::query()
             ->where('reservation_id', $reservation->id)
             ->sum('amount')) * 100);
+        $contractCovered = $this->isContractualLodgingCoveredByNetPayments($reservation);
 
         $queue = $this->buildPaymentQueue($reservation);
         $paidFlagsUpdated = 0;
@@ -532,7 +533,7 @@ class ReservationRetroactiveRecalculationService
             $night = $entry['night'];
             $shareCents = (int) ($entry['share_cents'] ?? 0);
 
-            $shouldBePaid = $shareCents <= 0 || $remainingCents >= $shareCents;
+            $shouldBePaid = $contractCovered || $shareCents <= 0 || $remainingCents >= $shareCents;
             if ($shouldBePaid && $shareCents > 0) {
                 $remainingCents = max(0, $remainingCents - $shareCents);
             }
@@ -556,6 +557,40 @@ class ReservationRetroactiveRecalculationService
             'total_nights' => $totalNights,
             'remaining_amount' => round($remainingCents / 100, 2),
         ];
+    }
+
+    private function isContractualLodgingCoveredByNetPayments(Reservation $reservation): bool
+    {
+        $contractualTotal = $this->resolveContractualLodgingTotal($reservation);
+        if ($contractualTotal <= 0) {
+            return false;
+        }
+
+        $paymentsNet = round(max(0, (float) Payment::query()
+            ->where('reservation_id', $reservation->id)
+            ->sum('amount')), 2);
+
+        return $paymentsNet + 0.01 >= $contractualTotal;
+    }
+
+    private function resolveContractualLodgingTotal(Reservation $reservation): float
+    {
+        $reservation->loadMissing(['reservationRooms']);
+
+        $rooms = $reservation->reservationRooms ?? collect();
+        if ($rooms->isNotEmpty()) {
+            $roomsWithSubtotal = $rooms->filter(static fn ($room) => (float) ($room->subtotal ?? 0) > 0);
+            if ($roomsWithSubtotal->count() === $rooms->count()) {
+                return round((float) $roomsWithSubtotal->sum(static fn ($room) => (float) ($room->subtotal ?? 0)), 2);
+            }
+        }
+
+        $reservationTotal = round((float) ($reservation->total_amount ?? 0), 2);
+        if ($reservationTotal > 0) {
+            return $reservationTotal;
+        }
+
+        return $this->calculateContractualStayNightsTotal($reservation);
     }
 
     /**
@@ -716,14 +751,24 @@ class ReservationRetroactiveRecalculationService
         Carbon $checkOutDate
     ): float {
         $nightsFromRange = max(1, $checkInDate->diffInDays($checkOutDate));
-        $pricePerNight = round((float) ($reservationRoom->price_per_night ?? 0), 2);
-        if ($pricePerNight > 0) {
-            return $pricePerNight;
-        }
-
         $subtotal = round((float) ($reservationRoom->subtotal ?? 0), 2);
         if ($subtotal > 0 && $nightsFromRange > 0) {
             return round($subtotal / $nightsFromRange, 2);
+        }
+
+        // Contingencia legacy:
+        // en reservas de una sola habitacion, priorizar total_amount para evitar
+        // arrastrar price_per_night inflado por calculos historicos incorrectos.
+        if ($reservation->reservationRooms->count() === 1) {
+            $reservationTotal = round((float) ($reservation->total_amount ?? 0), 2);
+            if ($reservationTotal > 0 && $nightsFromRange > 0) {
+                return round($reservationTotal / $nightsFromRange, 2);
+            }
+        }
+
+        $pricePerNight = round((float) ($reservationRoom->price_per_night ?? 0), 2);
+        if ($pricePerNight > 0) {
+            return $pricePerNight;
         }
 
         $existingPrice = (float) StayNight::query()
@@ -809,4 +854,3 @@ class ReservationRetroactiveRecalculationService
         }
     }
 }
-

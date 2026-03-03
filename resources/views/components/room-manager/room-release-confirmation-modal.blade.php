@@ -406,7 +406,7 @@
                                         }
                                     } else {
                                         if ($wire) {
-                                            $wire.call('releaseRoom', roomData.room_id, 'libre', paymentMethod, bankName, reference).finally(() => { isLoading = false; });
+                                            $wire.call('releaseRoom', roomData.room_id, 'pendiente_aseo', paymentMethod, bankName, reference).finally(() => { isLoading = false; });
                                         } else {
                                             isLoading = false;
                                         }

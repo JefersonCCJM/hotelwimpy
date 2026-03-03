@@ -101,6 +101,11 @@ class Room extends Model
         return $this->hasMany(RoomDailyStatus::class);
     }
 
+    public function quickReservations(): HasMany
+    {
+        return $this->hasMany(RoomQuickReservation::class);
+    }
+
     /**
      * Get the special rates for the room.
      */
@@ -627,41 +632,43 @@ class Room extends Model
 
         // 2️⃣ OCUPADA: solo si la fecha está DENTRO del rango real de la estancia
         if ($stay) {
-            // Obtener reservation_room para verificar check_out_date
-            $reservationRoom = $stay->reservation
-                ->reservationRooms
-                ->where('room_id', $this->id)
-                ->first();
-
-            if (!$reservationRoom || !$reservationRoom->check_out_date) {
-                // Si no hay reservation_room o check_out_date, asumir ocupada
-                return 'occupied';
-            }
-
-            $checkoutDate = \Carbon\Carbon::parse($reservationRoom->check_out_date)->startOfDay();
-
-            // Caso A: aún no ha hecho checkout (check_out_at es NULL)
-            if (is_null($stay->check_out_at)) {
-                // Si la fecha está ANTES del checkout → ocupada
-                if ($queryDate->lt($checkoutDate)) {
-                    return 'occupied';
-                }
-                
-                // Si la fecha ES el día del checkout → pendiente por checkout
-                if ($queryDate->equalTo($checkoutDate)) {
-                    return 'pending_checkout';
-                }
-                
-                // Si la fecha es DESPUÉS del checkout, la stay ya terminó
-                // Continuar con la lógica de pending_cleaning
-            } else {
-                // Caso B: checkout ya ejecutado (check_out_at IS NOT NULL)
-                // Si checkout ocurrió DESPUÉS de esta fecha → ocupada
+            // Caso B (primero): checkout YA ejecutado (check_out_at IS NOT NULL)
+            // No necesitamos reservation_room para este caso
+            if (!is_null($stay->check_out_at)) {
+                // Si checkout ocurrió DESPUÉS de esta fecha → todavía ocupada
                 if ($stay->check_out_at->gt($endOfQueryDay)) {
                     return 'occupied';
                 }
                 // Si checkout ocurrió en o antes de esta fecha, la stay ya terminó
-                // Continuar con la lógica de pending_cleaning
+                // Continuar con la lógica de pending_cleaning/free_clean (fall through)
+            } else {
+                // Caso A: estancia aún activa (check_out_at IS NULL)
+                // Necesitamos reservation_room para saber la fecha de checkout programada
+                // Nota: la reserva puede estar soft-deleted; usamos ?-> para evitar null crash
+                $reservationRoom = $stay->reservation
+                    ?->reservationRooms
+                    ?->where('room_id', $this->id)
+                    ->first();
+
+                if (!$reservationRoom || !$reservationRoom->check_out_date) {
+                    // Sin fecha de checkout programada → asumir ocupada
+                    return 'occupied';
+                }
+
+                $checkoutDate = \Carbon\Carbon::parse($reservationRoom->check_out_date)->startOfDay();
+
+                // Antes del checkout programado → ocupada
+                if ($queryDate->lt($checkoutDate)) {
+                    return 'occupied';
+                }
+
+                // En el día del checkout programado → pendiente por checkout
+                if ($queryDate->equalTo($checkoutDate)) {
+                    return 'pending_checkout';
+                }
+
+                // Después del checkout programado → la stay "terminó" lógicamente
+                // Continuar con la lógica de pending_cleaning/free_clean (fall through)
             }
         }
 

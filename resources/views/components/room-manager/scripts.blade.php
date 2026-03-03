@@ -28,6 +28,20 @@
                 balanceDue: 0
             };
         }
+
+        const numericBalanceDue = Number(financialContext.balanceDue || 0);
+        const hasNightContext = !!nightDate || Number(nightPrice || 0) > 0;
+
+        // Contingencia de produccion:
+        // si el saldo ya es 0 pero una noche aparece pendiente por drift de estado,
+        // sincronizar backend en lugar de intentar registrar un pago invalido.
+        if (hasNightContext && numericBalanceDue <= 0.01 && typeof Livewire !== 'undefined' && Livewire.dispatch) {
+            Livewire.dispatch('sync-reservation-night-status', [
+                reservationId,
+                nightDate || null
+            ]);
+            return;
+        }
         
         // Esperar a que Livewire este inicializado si no lo esta
         if (typeof Livewire === 'undefined' || !Livewire.all) {
@@ -63,6 +77,7 @@
         let customerSelect = null;
         let additionalGuestSelect = null;
         let productSelect = null;
+        let quickReservationSelect = null;
 
         if (window.__useReservationCalendarScripts !== true) {
             // Escuchar evento personalizado para registrar pagos
@@ -404,6 +419,56 @@ document.addEventListener('init-all-guests-additional-guest-select', function() 
             }, 150);  // Aumente el timeout a 150ms
         });
 
+        // ===== MODAL: RESERVA RÁPIDA =====
+        Livewire.on('quickReservationOpened', () => {
+            setTimeout(() => {
+                if (quickReservationSelect) {
+                    quickReservationSelect.destroy();
+                    quickReservationSelect = null;
+                }
+
+                const selectEl = document.getElementById('quick_reservation_customer_id');
+                if (!selectEl) return;
+
+                quickReservationSelect = new TomSelect(selectEl, {
+                    valueField: 'id',
+                    labelField: 'name',
+                    searchField: ['name', 'identification', 'text'],
+                    loadThrottle: 400,
+                    placeholder: 'Buscar cliente...',
+                    preload: true,
+                    load: (query, callback) => {
+                        fetch(`/api/customers/search?q=${encodeURIComponent(query || '')}`)
+                            .then(r => r.json())
+                            .then(j => callback(j.results || []))
+                            .catch(() => callback());
+                    },
+                    onChange: (val) => {
+                        const normalized = (val === '' || val === null || val === undefined)
+                            ? null
+                            : (isNaN(val) ? null : parseInt(val));
+                        @this.set('quickReservationForm.customer_id', normalized);
+                    },
+                    render: {
+                        option: (item, escape) => {
+                            const name = escape(item.name || item.text || '');
+                            const id   = escape(item.identification || '');
+                            return `<div class="px-4 py-2 border-b border-gray-50 hover:bg-blue-50 transition-colors">
+                                <div class="font-bold text-gray-900">${name}</div>
+                                ${id ? `<div class="text-[10px] text-gray-500 mt-0.5">ID: ${id}</div>` : ''}
+                            </div>`;
+                        },
+                        item: (item, escape) => {
+                            return `<div class="font-bold text-blue-700">${escape(item.name || item.text || '')}</div>`;
+                        },
+                        no_results: () => {
+                            return '<div class="px-4 py-2 text-gray-500 text-sm">No se encontraron clientes</div>';
+                        }
+                    }
+                });
+            }, 150);
+        });
+
         // Listen for customer created event from the new modal
         Livewire.on('customer-created', (data) => {
             const payload = Array.isArray(data) ? data[0] : data;
@@ -419,6 +484,20 @@ document.addEventListener('init-all-guests-additional-guest-select', function() 
                 noCustomersMsg.classList.add('hidden');
             }
             
+            // ===== MANEJAR QUICK-RESERVATION-MODAL =====
+            if (quickReservationSelect && customerId && context === 'principal') {
+                if (customerData) {
+                    quickReservationSelect.addOption({
+                        id: customerData.id,
+                        name: customerData.name,
+                        identification: customerData.identification,
+                        text: customerData.name
+                    });
+                }
+                quickReservationSelect.setValue(customerId);
+                @this.set('quickReservationForm.customer_id', customerId ? parseInt(customerId) : null);
+            }
+
             // ===== MANEJAR QUICK-RENT-MODAL (Cliente Principal) =====
             if (customerSelect && customerId) {
                 // Agregar el nuevo cliente a las opciones

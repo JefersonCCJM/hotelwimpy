@@ -17,6 +17,7 @@
     // Solo permitir acciones en fecha actual (no historicas ni futuras)
     $canPerformActions = !$isFutureDate && !$isPastDate;
     $canManageRooms = auth()->check() && auth()->user()->hasRole('Administrador');
+    $isQuickReserved = (bool) ($room->is_quick_reserved ?? false);
 @endphp
 
 <div class="flex items-center justify-end gap-1.5">
@@ -56,7 +57,28 @@
                 <span class="sr-only">Ocupar habitacion</span>
             </button>
 
-            {{-- Reservar (HOY) eliminado por requerimiento --}}
+        @endif
+
+        @if(!$isPastDate)
+            @if($isQuickReserved)
+                <button type="button"
+                    wire:click="cancelQuickReserve({{ $room->id }})"
+                    wire:loading.attr="disabled"
+                    title="Cancelar reserva rapida"
+                    class="inline-flex items-center justify-center w-8 h-8 rounded-lg border border-gray-300 bg-gray-100 text-gray-700 hover:bg-gray-200 hover:border-gray-400 transition-colors focus:outline-none focus:ring-2 focus:ring-gray-500 disabled:opacity-50">
+                    <i class="fas fa-times text-sm"></i>
+                    <span class="sr-only">Cancelar reserva rapida</span>
+                </button>
+            @else
+                <button type="button"
+                    wire:click="markRoomAsQuickReserved({{ $room->id }})"
+                    wire:loading.attr="disabled"
+                    title="Marcar como reservada"
+                    class="inline-flex items-center justify-center w-8 h-8 rounded-lg border border-blue-300 bg-blue-100 text-blue-700 hover:bg-blue-200 hover:border-blue-400 transition-colors focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:opacity-50">
+                    <i class="fas fa-bookmark text-sm"></i>
+                    <span class="sr-only">Reservar habitacion</span>
+                </button>
+            @endif
         @endif
     @endif
 
@@ -116,7 +138,7 @@
     {{-- ESTADO: pending_cleaning (Pendiente por aseo) --}}
     {{-- Anular ingreso: condicion independiente basada en operationalStatus (SSOT correcto) --}}
     {{-- cleaningCode puede retornar 'limpia' incorrectamente cuando el stay termino hoy --}}
-    @if($operationalStatus === 'pending_cleaning' && $canPerformActions && $isOperationalToday)
+    {{-- @if($operationalStatus === 'pending_cleaning' && $canPerformActions && $isOperationalToday)
         <button type="button"
             @click="confirmUndoCheckout({{ $room->id }}, '{{ addslashes($room->room_number) }}')"
             wire:loading.attr="disabled"
@@ -125,7 +147,7 @@
             <i class="fas fa-undo text-sm"></i>
             <span class="sr-only">Anular ingreso</span>
         </button>
-    @endif
+    @endif --}}
     {{-- Marcar como limpia: solo si cleaningCode es pendiente --}}
     @if($cleaningCode === 'pendiente' && !in_array($operationalStatus, ['occupied', 'pending_checkout'], true) && $canPerformActions && $isOperationalToday)
         <button type="button"
