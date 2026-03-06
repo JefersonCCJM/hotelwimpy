@@ -25,7 +25,7 @@ class CompanyTaxSetting extends Model
     public function isConfigured(): bool
     {
         return !empty($this->nit) && 
-               !empty($this->dv) && 
+               !blank($this->dv) && 
                !empty($this->municipality_id) &&
                !empty($this->email) &&
                !empty($this->company_name);
@@ -53,7 +53,7 @@ class CompanyTaxSetting extends Model
             $missing[] = 'NIT';
         }
 
-        if (empty($this->dv)) {
+        if (blank($this->dv)) {
             $missing[] = 'Dígito verificador (DV)';
         }
 

@@ -311,7 +311,7 @@
                             </div>
 
                             <!-- Dígito Verificador -->
-                            @if($this->requiresDV || (!empty($formData['dv']) && $this->isElectronicInvoiceCustomer()))
+                            @if($this->requiresDV || (filled($formData['dv'] ?? null) && $this->isElectronicInvoiceCustomer()))
                             <div class="grid grid-cols-1 sm:grid-cols-2 gap-5">
                                 <div>
                                     <label class="block text-xs font-semibold text-gray-700 mb-2">

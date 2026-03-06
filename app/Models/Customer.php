@@ -147,7 +147,7 @@ class Customer extends Model
             }
         }
         
-        if ($profile->requiresDV() && empty($profile->dv)) {
+        if ($profile->requiresDV() && blank($profile->dv)) {
             return false;
         }
         
@@ -197,7 +197,7 @@ class Customer extends Model
             }
         }
 
-        if ($profile->requiresDV() && empty($profile->dv)) {
+        if ($profile->requiresDV() && blank($profile->dv)) {
             $missing[] = 'DÃ­gito verificador (DV)';
         }
 
