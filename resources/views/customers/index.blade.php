@@ -13,7 +13,7 @@
                         <i class="fas fa-users text-lg sm:text-xl"></i>
                     </div>
                     <div>
-                        <h1 class="text-xl sm:text-2xl font-bold text-gray-900">Gestión de Clientes PRUEBA</h1>
+                        <h1 class="text-xl sm:text-2xl font-bold text-gray-900">Gestión de Clientes</h1>
                         <div class="flex items-center space-x-2 mt-1">
                             <span class="text-xs sm:text-sm text-gray-500">
                                 <i class="fas fa-database mr-1"></i> Base de datos de clientes
