@@ -1476,10 +1476,7 @@ class RoomManager extends Component
             })
             ->whereDoesntHave('reservation.stays', function ($query) use ($room) {
                 $query->where('room_id', (int) $room->id)
-                    ->where(function ($stayQuery) {
-                        $stayQuery->whereNotNull('check_in_at')
-                            ->orWhereIn('status', ['active', 'pending_checkout', 'finished']);
-                    });
+                    ->whereIn('status', ['active', 'pending_checkout']);
             })
             ->with(['reservation.customer'])
             ->orderBy('check_in_date')
