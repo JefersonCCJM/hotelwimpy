@@ -2336,7 +2336,7 @@ class RoomManager extends Component
             }
 
             $roomContractualTotal = round((float) ($reservationRoom?->subtotal ?? 0), 2);
-            if ($roomContractualTotal > 0 && abs($roomContractualTotal - $totalHospedaje) > 0.01) {
+            if (empty($stayHistory) && $roomContractualTotal > 0 && abs($roomContractualTotal - $totalHospedaje) > 0.01) {
                 $totalHospedaje = $roomContractualTotal;
             }
 
@@ -3474,61 +3474,128 @@ class RoomManager extends Component
         }
 
         try {
-            \Log::error('ðŸ”¥ updatePrices llamado con datos:', $this->editPricesForm);
-            
             if (!$this->editPricesForm || !isset($this->editPricesForm['nights'])) {
                 throw new \Exception('No hay datos de precios para actualizar');
             }
 
             DB::beginTransaction();
-            
-            $totalAmount = 0;
-            
-            // Actualizar cada noche
+
+            $updatedNightIds = [];
+            $affectedRoomIds = [];
+
             foreach ($this->editPricesForm['nights'] as $nightData) {
-                $stayNight = \App\Models\StayNight::find($nightData['id']);
-                if ($stayNight) {
-                    $stayNight->price = $nightData['price'];
-                    $stayNight->is_paid = $nightData['is_paid'] ?? false;
-                    $stayNight->updated_at = now();
-                    $stayNight->save();
-                    
-                    $totalAmount += $nightData['price'];
-                    
-                    \Log::error('ðŸŒ™ Noche actualizada:', [
-                        'id' => $stayNight->id,
-                        'price' => $stayNight->price,
-                        'is_paid' => $stayNight->is_paid
-                    ]);
+                $nightId = (int) ($nightData['id'] ?? 0);
+                if ($nightId <= 0) {
+                    continue;
+                }
+
+                $stayNight = StayNight::find($nightId);
+                if (!$stayNight) {
+                    continue;
+                }
+
+                $newPrice = round(max(0, (float) ($nightData['price'] ?? 0)), 2);
+                $stayNight->price = $newPrice;
+                $stayNight->is_paid = (bool) ($nightData['is_paid'] ?? false);
+                $stayNight->updated_at = now();
+                $stayNight->save();
+
+                $updatedNightIds[] = (int) $stayNight->id;
+                $affectedRoomIds[] = (int) ($stayNight->room_id ?? 0);
+            }
+
+            if (empty($updatedNightIds)) {
+                throw new \Exception('No se pudieron actualizar noches de estadia.');
+            }
+
+            $reservation = Reservation::with(['reservationRooms'])->find((int) ($this->editPricesForm['id'] ?? 0));
+            if (!$reservation) {
+                throw new \Exception('Reserva no encontrada para actualizar precios.');
+            }
+
+            $affectedRoomIds = array_values(array_unique(array_filter($affectedRoomIds, static fn ($id) => $id > 0)));
+            if (empty($affectedRoomIds) && $reservation->reservationRooms->count() === 1) {
+                $singleRoomId = (int) ($reservation->reservationRooms->first()->room_id ?? 0);
+                if ($singleRoomId > 0) {
+                    $affectedRoomIds = [$singleRoomId];
                 }
             }
-            
-            // Actualizar el total_amount de la reservation
-            $reservation = \App\Models\Reservation::find($this->editPricesForm['id']);
-            if ($reservation) {
-                $reservation->total_amount = $totalAmount;
-                $reservation->balance_due = $totalAmount - $reservation->payments()->sum('amount');
-                $reservation->save();
-                
-                \Log::error('ðŸ’° Reservation actualizada:', [
-                    'id' => $reservation->id,
-                    'total_amount' => $reservation->total_amount,
-                    'balance_due' => $reservation->balance_due
+
+            $contractTotal = 0.0;
+
+            foreach ($reservation->reservationRooms as $reservationRoom) {
+                $roomId = (int) ($reservationRoom->room_id ?? 0);
+                if ($roomId <= 0) {
+                    continue;
+                }
+                if (!in_array($roomId, $affectedRoomIds, true)) {
+                    $contractTotal += round(max(0, (float) ($reservationRoom->subtotal ?? 0)), 2);
+                    continue;
+                }
+
+                $roomNightsQuery = StayNight::query()
+                    ->where('reservation_id', $reservation->id)
+                    ->where('room_id', $roomId);
+
+                $roomNights = (int) ($reservationRoom->nights ?? 0);
+                if (!empty($reservationRoom->check_in_date) && !empty($reservationRoom->check_out_date)) {
+                    $checkIn = Carbon::parse((string) $reservationRoom->check_in_date)->startOfDay();
+                    $checkOut = Carbon::parse((string) $reservationRoom->check_out_date)->startOfDay();
+
+                    if ($checkOut->gt($checkIn)) {
+                        $roomNights = max(1, $checkIn->diffInDays($checkOut));
+                        $roomNightsQuery
+                            ->whereDate('date', '>=', $checkIn->toDateString())
+                            ->whereDate('date', '<', $checkOut->toDateString());
+                    }
+                }
+
+                $roomSubtotal = round(max(0, (float) (clone $roomNightsQuery)->sum('price')), 2);
+
+                if ($roomNights <= 0) {
+                    $roomNights = max(1, (int) (clone $roomNightsQuery)->count());
+                }
+
+                $reservationRoom->update([
+                    'nights' => $roomNights,
+                    'price_per_night' => $roomNights > 0 ? round($roomSubtotal / $roomNights, 2) : 0,
+                    'subtotal' => $roomSubtotal,
                 ]);
+
+                $contractTotal += $roomSubtotal;
             }
-            
+
+            $contractTotal = round(max(0, $contractTotal), 2);
+            if ($contractTotal <= 0) {
+                $contractTotal = (float) StayNight::query()
+                    ->where('reservation_id', $reservation->id)
+                    ->sum('price');
+            }
+
+            $paymentsTotal = (float) $reservation->payments()->sum('amount');
+            $reservation->update([
+                'total_amount' => round(max(0, $contractTotal), 2),
+                'balance_due' => max(0, round($contractTotal - $paymentsTotal, 2)),
+            ]);
+
+            $this->syncStayNightsPaymentCoverage($reservation);
+
             DB::commit();
-            
+
             $this->editPricesModal = false;
             $this->editPricesForm = null;
-            
-            $this->dispatch('notify', type: 'success', message: 'Precios actualizados correctamente');
-            
+
+            if ($this->roomDetailModal && $this->detailData && isset($this->detailData['room']['id'])) {
+                $this->openRoomDetail((int) $this->detailData['room']['id']);
+            }
+
+            $this->loadRooms();
+            $this->dispatch('notify', type: 'success', message: 'Precios actualizados correctamente.');
         } catch (\Exception $e) {
             DB::rollBack();
-            \Log::error('âŒ Error en updatePrices: ' . $e->getMessage(), [
+            \Log::error('Error en updatePrices: ' . $e->getMessage(), [
                 'editPricesForm' => $this->editPricesForm,
-                'trace' => $e->getTraceAsString()
+                'trace' => $e->getTraceAsString(),
             ]);
             $this->dispatch('notify', type: 'error', message: 'Error al actualizar precios: ' . $e->getMessage());
         }
@@ -4194,9 +4261,9 @@ class RoomManager extends Component
             ->map(static fn (StayNight $night) => round((float) ($night->price ?? 0), 2))
             ->unique()
             ->count();
-        $hasPaidNights = $stayNights->contains(static fn (StayNight $night) => (bool) ($night->is_paid ?? false));
 
-        if ($distinctPriceCount > 1 && $hasPaidNights) {
+        // Si los precios por noche son distintos, asumir ajuste manual válido y no normalizar.
+        if ($distinctPriceCount > 1) {
             return;
         }
 
@@ -6863,11 +6930,18 @@ class RoomManager extends Component
             $selectedDate,
             $rooms->getCollection()->pluck('id')
         );
+        $nightStatusByReservationRoom = StayNight::query()
+            ->whereDate('date', $selectedDate->toDateString())
+            ->whereIn('room_id', $rooms->getCollection()->pluck('id'))
+            ->get(['reservation_id', 'room_id', 'is_paid'])
+            ->keyBy(static function (StayNight $night): string {
+                return ((int) $night->reservation_id) . '-' . ((int) $night->room_id);
+            });
         $dailyStats = $this->getDailyOverviewStats();
         $receptionReservationsSummary = $this->getReceptionReservationsSummary();
 
         // Enriquecer rooms con estados y deudas
-        $rooms->getCollection()->transform(function($room) use ($selectedDate, $quickReservedRoomMap) {
+        $rooms->getCollection()->transform(function($room) use ($selectedDate, $quickReservedRoomMap, $nightStatusByReservationRoom) {
             $roomIsQuickReserved = isset($quickReservedRoomMap[(int) $room->id]);
             if ($roomIsQuickReserved) {
                 $operationalStatus = $room->getOperationalStatus($selectedDate);
@@ -6897,6 +6971,8 @@ class RoomManager extends Component
                 // Se usa reservation.total_amount como SSOT (NO tarifas, NO heurísticas)
                 
                 $reservation = $room->current_reservation;
+                $nightStatusKey = ((int) $reservation->id) . '-' . ((int) $room->id);
+                $nightStatusForOperationalDate = $nightStatusByReservationRoom->get($nightStatusKey);
                 
                 // Obtener stay activa para usar check_in_at real (timestamp)
                 $stay = $room->getAvailabilityService()->getStayForDate($this->date);
@@ -6974,7 +7050,11 @@ class RoomManager extends Component
                 $expectedPaid = $pricePerNight * $nightsConsumed;
                 
                 // âœ… VERDAD FINAL: Noche pagada si pagos positivos >= esperado
-                $room->is_night_paid = $expectedPaid > 0 && $paidAmount >= $expectedPaid;
+                if ($nightStatusForOperationalDate) {
+                    $room->is_night_paid = (bool) ($nightStatusForOperationalDate->is_paid ?? false);
+                } else {
+                    $room->is_night_paid = $expectedPaid > 0 && $paidAmount >= $expectedPaid;
+                }
 
                 // Calcular total_debt usando SSOT financiero (alineado con room-payment-info y room-detail-modal)
                 // REGLA CRÍTICA: Separar pagos y devoluciones para coherencia financiera
