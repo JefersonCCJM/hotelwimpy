@@ -18,6 +18,7 @@
     $canPerformActions = !$isFutureDate && !$isPastDate;
     $canManageRooms = auth()->check() && auth()->user()->hasRole('Administrador');
     $isQuickReserved = (bool) ($room->is_quick_reserved ?? false);
+    $hasPendingReservation = !empty($room->pending_checkin_reservation) || !empty($room->future_reservation);
 @endphp
 
 <div class="flex items-center justify-end gap-1.5">
@@ -47,7 +48,7 @@
                     <span class="sr-only">Cambiar habitacion</span>
                 </button>
             @endif
-            @if($room->pending_checkin_reservation)
+            @if($hasPendingReservation)
                 {{-- Check-in de reserva pendiente (HOY) --}}
                 <button type="button"
                     wire:click="performReservationCheckIn({{ $room->id }})"
@@ -76,10 +77,10 @@
                 <button type="button"
                     wire:click="cancelQuickReserve({{ $room->id }})"
                     wire:loading.attr="disabled"
-                    title="Cancelar reserva rapida"
+                    title="{{ $hasPendingReservation ? 'Cancelar reserva' : 'Cancelar reserva rapida' }}"
                     class="inline-flex items-center justify-center w-8 h-8 rounded-lg border border-gray-300 bg-gray-100 text-gray-700 hover:bg-gray-200 hover:border-gray-400 transition-colors focus:outline-none focus:ring-2 focus:ring-gray-500 disabled:opacity-50">
                     <i class="fas fa-times text-sm"></i>
-                    <span class="sr-only">Cancelar reserva rapida</span>
+                    <span class="sr-only">{{ $hasPendingReservation ? 'Cancelar reserva' : 'Cancelar reserva rapida' }}</span>
                 </button>
             @else
                 <button type="button"

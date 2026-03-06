@@ -98,6 +98,9 @@
     $reservationBadgeCode = strtoupper(trim((string) ($reservationBadge->reservation_code ?? '')));
     $hasReservationBadge = str_starts_with($reservationBadgeCode, 'RES-');
     $isQuickReserved = (bool) ($room->is_quick_reserved ?? false);
+    $pendingCheckinReservation = $room->pending_checkin_reservation ?? $room->future_reservation ?? null;
+    $pendingCheckinReservationCode = strtoupper(trim((string) ($pendingCheckinReservation->reservation_code ?? '')));
+    $isPendingReservation = $pendingCheckinReservation && str_starts_with($pendingCheckinReservationCode, 'RES-');
 @endphp
 
 <tr
@@ -309,7 +312,7 @@
             @elseif($isQuickReserved && $operationalStatus === 'free_clean')
                 <div class="flex flex-col">
                     <span class="text-sm font-semibold text-gray-900">${{ number_format($room->base_price_per_night ?? 0, 0, ',', '.') }}</span>
-                    <span class="text-xs text-blue-600">reserva rapida del dia</span>
+                    <span class="text-xs text-blue-600">{{ $isPendingReservation ? 'reserva pendiente de check-in' : 'reserva rapida del dia' }}</span>
                 </div>
             @else
                 <div class="flex flex-col">
