@@ -5,9 +5,11 @@ namespace App\Livewire;
 use Livewire\Component;
 use Livewire\WithPagination;
 use Livewire\Attributes\On;
+use App\Enums\ShiftHandoverStatus;
 use App\Models\Sale;
 use App\Models\SaleItem;
 use App\Models\Shift;
+use App\Models\ShiftHandover;
 use App\Models\Room;
 use App\Models\Product;
 use App\Models\Category;
@@ -166,6 +168,32 @@ class SalesManager extends Component
                !empty($this->room_id);
     }
 
+    private function resolveOperationalActiveHandover(?User $user, ?Shift $operationalShift, bool $isAdmin): ?ShiftHandover
+    {
+        if (!$operationalShift) {
+            return null;
+        }
+
+        $userActiveHandover = $user?->turnoActivo()->first();
+        if (
+            $userActiveHandover &&
+            (int) ($userActiveHandover->from_shift_id ?? $userActiveHandover->id) === (int) $operationalShift->id
+        ) {
+            return $userActiveHandover;
+        }
+
+        if (!$isAdmin) {
+            return null;
+        }
+
+        return ShiftHandover::query()
+            ->where('status', ShiftHandoverStatus::ACTIVE)
+            ->whereRaw('COALESCE(from_shift_id, id) = ?', [(int) $operationalShift->id])
+            ->latest('started_at')
+            ->latest('id')
+            ->first();
+    }
+
     public function openShowSaleModal(int $saleId): void
     {
         if (!Auth::user()?->can('view_sales') || !$this->saleExists($saleId)) {
@@ -304,17 +332,10 @@ class SalesManager extends Component
 
         $user = Auth::user();
         $operationalShift = Shift::openOperational()->first();
-        $activeHandover = $user?->turnoActivo()->first();
         $isAdmin = $user?->hasRole('Administrador') ?? false;
+        $activeHandover = $this->resolveOperationalActiveHandover($user, $operationalShift, $isAdmin);
 
-        if (
-            !$isAdmin &&
-            (
-                !$operationalShift ||
-                !$activeHandover ||
-                (int) ($activeHandover->from_shift_id ?? $activeHandover->id) !== (int) $operationalShift->id
-            )
-        ) {
+        if (!$operationalShift || !$activeHandover) {
             $this->dispatch('notify', type: 'error', message: 'Debe existir un turno operativo abierto para registrar la venta.');
             return;
         }
@@ -367,7 +388,7 @@ class SalesManager extends Component
                 $sale = Sale::create([
                     'user_id' => (int) $user->id,
                     'room_id' => !empty($payload['room_id']) ? (int) $payload['room_id'] : null,
-                    'shift_handover_id' => $activeHandover?->id,
+                    'shift_handover_id' => $activeHandover->id,
                     'payment_method' => $paymentMethod,
                     'cash_amount' => $cashAmount,
                     'transfer_amount' => $transferAmount,
@@ -396,9 +417,7 @@ class SalesManager extends Component
                     !empty($payload['room_id']) ? (int) $payload['room_id'] : null
                 );
 
-                if ($activeHandover) {
-                    $activeHandover->updateTotals();
-                }
+                $sale->shiftHandover?->updateTotals();
             });
 
             $this->quickSaleForm = [
@@ -443,17 +462,10 @@ class SalesManager extends Component
 
         $user = Auth::user();
         $operationalShift = Shift::openOperational()->first();
-        $activeHandover = $user?->turnoActivo()->first();
         $isAdmin = $user?->hasRole('Administrador') ?? false;
+        $activeHandover = $this->resolveOperationalActiveHandover($user, $operationalShift, $isAdmin);
 
-        if (
-            !$isAdmin &&
-            (
-                !$operationalShift ||
-                !$activeHandover ||
-                (int) ($activeHandover->from_shift_id ?? $activeHandover->id) !== (int) $operationalShift->id
-            )
-        ) {
+        if (!$operationalShift || !$activeHandover) {
             $this->dispatch('notify', type: 'error', message: 'Debe existir un turno operativo abierto para registrar ingresos externos.');
             return;
         }
@@ -461,9 +473,9 @@ class SalesManager extends Component
         $selectedDate = $this->date ?: now()->format('Y-m-d');
 
         DB::transaction(function () use ($validated, $user, $activeHandover, $selectedDate): void {
-            ExternalIncome::create([
+            $income = ExternalIncome::create([
                 'user_id' => (int) $user->id,
-                'shift_handover_id' => $activeHandover?->id,
+                'shift_handover_id' => $activeHandover->id,
                 'payment_method' => (string) $validated['externalIncomeForm']['payment_method'],
                 'income_date' => $selectedDate,
                 'amount' => (float) $validated['externalIncomeForm']['amount'],
@@ -473,9 +485,7 @@ class SalesManager extends Component
                     : null,
             ]);
 
-            if ($activeHandover) {
-                $activeHandover->updateTotals();
-            }
+            $income->shiftHandover?->updateTotals();
         });
 
         $this->externalIncomeForm = [
