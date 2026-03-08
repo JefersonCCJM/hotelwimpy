@@ -38,7 +38,7 @@
             @endif
         @elseif($canPerformActions)
             {{-- Cambiar habitacion de reserva futura si tiene RES- --}}
-            @if($room->future_reservation)
+            @if($hasPendingReservation)
                 <button type="button"
                     wire:click="openChangeRoom({{ $room->id }})"
                     wire:loading.attr="disabled"

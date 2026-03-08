@@ -598,6 +598,10 @@ class RoomManager extends Component
 
     private ?int $checkedInReservationStatusIdCache = null;
     private bool $checkedInReservationStatusResolved = false;
+    private ?int $checkedOutReservationStatusIdCache = null;
+    private bool $checkedOutReservationStatusResolved = false;
+    private ?int $cancelledReservationStatusIdCache = null;
+    private bool $cancelledReservationStatusResolved = false;
 
     private function isAdmin(): bool
     {
@@ -1481,6 +1485,102 @@ class RoomManager extends Component
         return $this->checkedInReservationStatusIdCache;
     }
 
+    private function resolveCheckedOutReservationStatusId(): ?int
+    {
+        if ($this->checkedOutReservationStatusResolved) {
+            return $this->checkedOutReservationStatusIdCache;
+        }
+
+        $this->checkedOutReservationStatusResolved = true;
+
+        $normalize = static function (?string $value): string {
+            $raw = trim((string) ($value ?? ''));
+            if ($raw === '') {
+                return '';
+            }
+
+            $normalized = Str::ascii(strtolower($raw));
+            $normalized = str_replace(['-', ' '], '_', $normalized);
+
+            return preg_replace('/_+/', '_', $normalized) ?? '';
+        };
+
+        $statuses = DB::table('reservation_statuses')
+            ->select(['id', 'code', 'name'])
+            ->get();
+
+        $match = $statuses->first(function ($status) use ($normalize): bool {
+            $code = $normalize((string) ($status->code ?? ''));
+            $name = $normalize((string) ($status->name ?? ''));
+
+            if (in_array($code, ['checked_out', 'check_out', 'checkedout', 'departed', 'salida', 'egresado', 'salio'], true)) {
+                return true;
+            }
+
+            if (in_array($name, ['checked_out', 'check_out', 'checkedout', 'departed', 'salida', 'egresado', 'salio'], true)) {
+                return true;
+            }
+
+            return (str_contains($code, 'check') && str_contains($code, 'out'))
+                || (str_contains($name, 'check') && str_contains($name, 'out'))
+                || str_contains($code, 'salid')
+                || str_contains($name, 'salid')
+                || str_contains($code, 'egres')
+                || str_contains($name, 'egres');
+        });
+
+        $this->checkedOutReservationStatusIdCache = $match ? (int) $match->id : null;
+
+        return $this->checkedOutReservationStatusIdCache;
+    }
+
+    private function resolveCancelledReservationStatusId(): ?int
+    {
+        if ($this->cancelledReservationStatusResolved) {
+            return $this->cancelledReservationStatusIdCache;
+        }
+
+        $this->cancelledReservationStatusResolved = true;
+
+        $normalize = static function (?string $value): string {
+            $raw = trim((string) ($value ?? ''));
+            if ($raw === '') {
+                return '';
+            }
+
+            $normalized = Str::ascii(strtolower($raw));
+            $normalized = str_replace(['-', ' '], '_', $normalized);
+
+            return preg_replace('/_+/', '_', $normalized) ?? '';
+        };
+
+        $statuses = DB::table('reservation_statuses')
+            ->select(['id', 'code', 'name'])
+            ->get();
+
+        $match = $statuses->first(function ($status) use ($normalize): bool {
+            $code = $normalize((string) ($status->code ?? ''));
+            $name = $normalize((string) ($status->name ?? ''));
+
+            if (in_array($code, ['cancelled', 'canceled', 'cancelada', 'cancelado', 'anulada', 'anulado'], true)) {
+                return true;
+            }
+
+            if (in_array($name, ['cancelled', 'canceled', 'cancelada', 'cancelado', 'anulada', 'anulado'], true)) {
+                return true;
+            }
+
+            return str_contains($code, 'cancel')
+                || str_contains($name, 'cancel')
+                || str_contains($code, 'anulad')
+                || str_contains($name, 'anulad');
+        });
+
+        $this->cancelledReservationStatusIdCache = $match ? (int) $match->id : null;
+
+        return $this->cancelledReservationStatusIdCache;
+    }
+
     /**
      * Limpia una reserva rapida especifica para una habitacion/fecha.
      */
@@ -1500,6 +1600,13 @@ class RoomManager extends Component
     {
         $dateString = $selectedDate->toDateString();
         $checkedInStatusId = $this->resolveCheckedInReservationStatusId();
+        $checkedOutStatusId = $this->resolveCheckedOutReservationStatusId();
+        $cancelledStatusId = $this->resolveCancelledReservationStatusId();
+        $excludedStatusIds = array_values(array_unique(array_filter([
+            $checkedInStatusId,
+            $checkedOutStatusId,
+            $cancelledStatusId,
+        ])));
 
         return ReservationRoom::query()
             ->where('room_id', (int) $room->id)
@@ -1518,25 +1625,78 @@ class RoomManager extends Component
                 $query->whereNull('check_out_date')
                     ->orWhereDate('check_out_date', '>=', $dateString);
             })
-            ->whereHas('reservation', function ($query) use ($checkedInStatusId) {
+            ->whereHas('reservation', function ($query) {
                 $query->whereNull('deleted_at');
-
-                if (!empty($checkedInStatusId)) {
-                    $query->where(function ($statusQuery) use ($checkedInStatusId) {
+            })
+            ->whereHas('reservation', function ($query) use ($excludedStatusIds) {
+                if (!empty($excludedStatusIds)) {
+                    $query->where(function ($statusQuery) use ($excludedStatusIds) {
                         $statusQuery->whereNull('status_id')
-                            ->orWhere('status_id', '!=', (int) $checkedInStatusId);
+                            ->orWhereNotIn('status_id', $excludedStatusIds);
                     });
                 }
             })
             ->whereDoesntHave('reservation.stays', function ($query) use ($room) {
-                $query->where('room_id', (int) $room->id)
-                    ->whereIn('status', ['active', 'pending_checkout']);
+                $query->where('room_id', (int) $room->id);
             })
             ->with(['reservation.customer'])
             ->orderBy('check_in_date')
             ->orderBy('id')
             ->first()
             ?->reservation;
+    }
+
+    private function roomHasQuickReservationMarker(int $roomId, Carbon $selectedDate): bool
+    {
+        return RoomQuickReservation::query()
+            ->where('room_id', $roomId)
+            ->whereDate('operational_date', $selectedDate->toDateString())
+            ->exists();
+    }
+
+    private function reservationAlreadyUsesRoom(int $reservationId, int $roomId): bool
+    {
+        return ReservationRoom::query()
+            ->where('reservation_id', $reservationId)
+            ->where('room_id', $roomId)
+            ->exists();
+    }
+
+    private function isRoomAvailableForChange(Room $room, Carbon $selectedDate, int $reservationId): bool
+    {
+        if ($room->getOperationalStatus($selectedDate) !== 'free_clean') {
+            return false;
+        }
+
+        if ($this->roomHasQuickReservationMarker((int) $room->id, $selectedDate)) {
+            return false;
+        }
+
+        if ($this->reservationAlreadyUsesRoom($reservationId, (int) $room->id)) {
+            return false;
+        }
+
+        return $this->getPendingCheckInReservationForRoom($room, $selectedDate) === null;
+    }
+
+    private function moveQuickReservationMarker(int $currentRoomId, int $newRoomId, Carbon $selectedDate): void
+    {
+        RoomQuickReservation::query()
+            ->where('room_id', $newRoomId)
+            ->whereDate('operational_date', $selectedDate->toDateString())
+            ->delete();
+
+        $updated = RoomQuickReservation::query()
+            ->where('room_id', $currentRoomId)
+            ->whereDate('operational_date', $selectedDate->toDateString())
+            ->update(['room_id' => $newRoomId]);
+
+        if ($updated === 0) {
+            RoomQuickReservation::query()
+                ->where('room_id', $currentRoomId)
+                ->whereDate('operational_date', $selectedDate->toDateString())
+                ->delete();
+        }
     }
 
     public function markRoomAsQuickReserved(int $roomId): void
@@ -3097,12 +3257,30 @@ class RoomManager extends Component
 
         try {
             $room = \App\Models\Room::findOrFail($roomId);
-            $reservation = $room->getActiveReservation($this->date);
+            $date = $this->date instanceof \Carbon\Carbon ? $this->date : \Carbon\Carbon::parse($this->date);
+            $selectedDate = $date->copy()->startOfDay();
+            $activeStay = Stay::query()
+                ->where('room_id', (int) $room->id)
+                ->whereNull('check_out_at')
+                ->whereIn('status', ['active', 'pending_checkout'])
+                ->with(['reservation.customer'])
+                ->orderByDesc('check_in_at')
+                ->first();
+
+            $changeMode = null;
+            $reservation = $activeStay?->reservation;
+
+            if ($reservation) {
+                $changeMode = 'active_stay';
+            }
 
             if (!$reservation) {
-                // Intentar con reserva futura (pendiente de check-in)
-                // getFutureReservation retorna un objeto Reservation directamente
-                $reservation = $room->getFutureReservation($this->date);
+                $reservation = $this->getPendingCheckInReservationForRoom($room, $selectedDate)
+                    ?: $room->getFutureReservation($selectedDate);
+
+                if ($reservation) {
+                    $changeMode = 'pending_reservation';
+                }
             }
 
             if (!$reservation) {
@@ -3110,17 +3288,20 @@ class RoomManager extends Component
                 return;
             }
 
-            // Cargar habitaciones disponibles (free_clean en la fecha seleccionada)
-            $date = $this->date instanceof \Carbon\Carbon ? $this->date : \Carbon\Carbon::parse($this->date);
+            $reservation->loadMissing(['customer', 'reservationRooms']);
+            $reservationRoom = $reservation->reservationRooms->firstWhere('room_id', (int) $room->id);
+            if (!$reservationRoom) {
+                $this->dispatch('notify', type: 'error', message: 'La reserva no tiene asignada esta habitacion.');
+                return;
+            }
+
             $allRooms = \App\Models\Room::active()->with('roomType')->orderBy('room_number')->get();
-            $available = $allRooms->filter(function ($r) use ($room, $date) {
-                if ($r->id === $room->id) return false;
-                if ($r->getOperationalStatus($date) !== 'free_clean') {
+            $available = $allRooms->filter(function ($candidateRoom) use ($room, $selectedDate, $reservation) {
+                if ((int) $candidateRoom->id === (int) $room->id) {
                     return false;
                 }
 
-                $pendingReservation = $this->getPendingCheckInReservationForRoom($r, $date->copy()->startOfDay());
-                return $pendingReservation === null;
+                return $this->isRoomAvailableForChange($candidateRoom, $selectedDate, (int) $reservation->id);
             })->values();
 
             if ($available->isEmpty()) {
@@ -3132,8 +3313,10 @@ class RoomManager extends Component
                 'room_id'          => $room->id,
                 'room_number'      => $room->room_number,
                 'reservation_id'   => $reservation->id,
+                'reservation_room_id' => (int) $reservationRoom->id,
                 'reservation_code' => $reservation->reservation_code ?? ('#' . $reservation->id),
                 'customer_name'    => $reservation->customer?->name ?? 'Sin cliente',
+                'change_mode'      => $changeMode,
             ];
 
             $this->availableRoomsForChange = $available->map(fn($r) => [
@@ -3168,65 +3351,86 @@ class RoomManager extends Component
             $newRoom = \App\Models\Room::findOrFail($newRoomId);
             $date    = $this->date instanceof \Carbon\Carbon ? $this->date : \Carbon\Carbon::parse($this->date);
             $selectedDate = $date->copy()->startOfDay();
+            $reservation = \App\Models\Reservation::with(['stays', 'stayNights', 'reservationRooms'])->findOrFail($reservationId);
 
-            if ($newRoom->getOperationalStatus($date) !== 'free_clean') {
+            if (!$this->isRoomAvailableForChange($newRoom, $selectedDate, (int) $reservationId)) {
                 $this->dispatch('notify', type: 'error', message: 'La habitacion seleccionada ya no esta disponible.');
                 return;
             }
 
-            $reservationInTargetRoom = $this->getPendingCheckInReservationForRoom($newRoom, $selectedDate);
-            if ($reservationInTargetRoom && (int) $reservationInTargetRoom->id !== (int) $reservationId) {
-                $this->dispatch('notify', type: 'error', message: 'La habitacion seleccionada ya tiene una reserva pendiente.');
+            if ($this->reservationAlreadyUsesRoom((int) $reservationId, (int) $newRoomId)) {
+                $this->dispatch('notify', type: 'error', message: 'La reserva ya tiene asignada la habitacion seleccionada.');
                 return;
             }
 
-            $reservation = \App\Models\Reservation::with(['stays', 'stayNights', 'reservationRooms'])->findOrFail($reservationId);
+            $reservationRoom = $reservation->reservationRooms->firstWhere('room_id', (int) $currentRoomId);
+            if (!$reservationRoom) {
+                $this->dispatch('notify', type: 'error', message: 'No se encontro la asignacion de habitacion que deseas mover.');
+                return;
+            }
 
-            \DB::transaction(function () use ($reservation, $currentRoomId, $newRoomId, $selectedDate) {
-                // Actualizar stay activo si existe
-                $activeStay = $reservation->stays->whereNull('check_out_at')->first();
-                $hadActiveStay = false;
+            $activeStay = Stay::query()
+                ->where('reservation_id', (int) $reservation->id)
+                ->where('room_id', (int) $currentRoomId)
+                ->whereNull('check_out_at')
+                ->whereIn('status', ['active', 'pending_checkout'])
+                ->orderByDesc('check_in_at')
+                ->first();
+
+            $changeMode = $activeStay ? 'active_stay' : 'pending_reservation';
+
+            \DB::transaction(function () use ($reservation, $reservationRoom, $activeStay, $changeMode, $currentRoomId, $newRoomId, $selectedDate) {
                 if ($activeStay) {
-                    $activeStay->update(['room_id' => $newRoomId]);
-                    $hadActiveStay = true;
-                }
+                    $transferTimestamp = now();
+                    $activeStay->update([
+                        'check_out_at' => $transferTimestamp,
+                        'status' => 'finished',
+                    ]);
 
-                // Reasignar TODOS los stay_nights al nuevo room
-                \App\Models\StayNight::where('reservation_id', $reservation->id)
-                    ->update(['room_id' => $newRoomId]);
+                    $newStay = Stay::query()->create([
+                        'reservation_id' => (int) $reservation->id,
+                        'room_id' => (int) $newRoomId,
+                        'check_in_at' => $transferTimestamp,
+                        'check_out_at' => null,
+                        'status' => in_array((string) $activeStay->status, ['active', 'pending_checkout'], true)
+                            ? (string) $activeStay->status
+                            : 'active',
+                    ]);
 
-                // Actualizar reservation_rooms: eliminar old, crear new
-                $oldReservationRoom = $reservation->reservationRooms
-                    ->where('room_id', $currentRoomId)->first();
+                    StayNight::query()
+                        ->where('reservation_id', (int) $reservation->id)
+                        ->where('room_id', (int) $currentRoomId)
+                        ->whereDate('date', '>=', $selectedDate->toDateString())
+                        ->update([
+                            'room_id' => (int) $newRoomId,
+                            'stay_id' => (int) $newStay->id,
+                        ]);
 
-                if ($oldReservationRoom) {
-                    $oldReservationRoom->update(['room_id' => $newRoomId]);
-                }
+                    $reservationRoom->update(['room_id' => (int) $newRoomId]);
 
-                // Mover marcador visual de reserva del cuarto anterior al nuevo.
-                // Esto mantiene el estado "Reservada" (azul) en la habitacion correcta.
-                RoomQuickReservation::query()
-                    ->where('room_id', (int) $newRoomId)
-                    ->whereDate('operational_date', $selectedDate->toDateString())
-                    ->delete();
+                    RoomQuickReservation::query()
+                        ->whereIn('room_id', [(int) $currentRoomId, (int) $newRoomId])
+                        ->whereDate('operational_date', $selectedDate->toDateString())
+                        ->delete();
 
-                RoomQuickReservation::query()
-                    ->where('room_id', (int) $currentRoomId)
-                    ->whereDate('operational_date', $selectedDate->toDateString())
-                    ->update(['room_id' => (int) $newRoomId]);
-
-                // Solo marcar aseo pendiente si realmente hubo una estadia activa movida.
-                if ($hadActiveStay) {
-                    \App\Models\Room::where('id', $currentRoomId)
+                    \App\Models\Room::where('id', (int) $currentRoomId)
                         ->update(['last_cleaned_at' => null]);
+                } else {
+                    $reservationRoom->update(['room_id' => (int) $newRoomId]);
+                    $this->moveQuickReservationMarker((int) $currentRoomId, (int) $newRoomId, $selectedDate);
+
+                    \App\Models\Room::where('id', (int) $currentRoomId)
+                        ->update(['last_cleaned_at' => now()]);
                 }
             });
 
             $this->cancelChangeRoom();
-            $this->dispatch('room-quick-reserve-cleared', roomId: (int) $currentRoomId);
-            $this->dispatch('room-quick-reserve-marked', roomId: (int) $newRoomId);
+            $this->loadRooms();
+            $this->dispatch('$refresh');
             $this->dispatch('refreshRooms');
-            $this->dispatch('notify', type: 'success', message: 'Habitacion cambiada correctamente.');
+            $this->dispatch('notify', type: 'success', message: $changeMode === 'active_stay'
+                ? 'Habitacion cambiada correctamente. La nueva habitacion queda ocupada.'
+                : 'Habitacion cambiada correctamente. La reserva sigue pendiente de check-in.');
 
         } catch (\Exception $e) {
             \Log::error('Error en submitChangeRoom: ' . $e->getMessage());
@@ -6842,7 +7046,12 @@ class RoomManager extends Component
             $reservation->payment_status_id = DB::table('payment_statuses')
                 ->where('code', 'paid')
                 ->value('id');
+            $checkedOutStatusId = $this->resolveCheckedOutReservationStatusId();
+            if (!empty($checkedOutStatusId)) {
+                $reservation->status_id = (int) $checkedOutStatusId;
+            }
             $reservation->save();
+            $this->clearQuickReserveForDate((int) $room->id, $today);
 
             // Estado de limpieza al liberar.
             // Por defecto queda pendiente por aseo, salvo que se solicite "limpia" o "libre".
@@ -7254,7 +7463,9 @@ class RoomManager extends Component
             }
 
             $room->display_status = $room->getDisplayStatus($this->date);
-            $room->current_reservation = $room->getActiveReservation($this->date);
+            $room->current_reservation = in_array($operationalStatus, ['occupied', 'pending_checkout'], true)
+                ? $room->getActiveReservation($this->date)
+                : null;
             $room->future_reservation = $room->getFutureReservation($this->date);
             $room->pending_checkin_reservation = $this->getPendingCheckInReservationForRoom($room, $selectedDate);
             

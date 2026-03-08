@@ -30,49 +30,14 @@
         }
     }
 
-    $hasStayInfo = $stay && $stay->reservation;
-    $selectedDateNormalized = $selectedDate->copy()->startOfDay();
-    $reservationBadge = null;
-
-    // Mostrar etiqueta de reserva SOLO cuando aun no existe check-in (sin stay activa).
-    if (!$hasStayInfo && !$reservationBadge && isset($room->reservationRooms)) {
-        $reservationRoomForDate = $room->reservationRooms->first(function ($reservationRoom) use ($selectedDateNormalized) {
-            $reservation = $reservationRoom->reservation ?? null;
-            if (!$reservation) {
-                return false;
-            }
-
-            if (method_exists($reservation, 'trashed') && $reservation->trashed()) {
-                return false;
-            }
-
-            $code = strtoupper(trim((string) ($reservation->reservation_code ?? '')));
-            if (!str_starts_with($code, 'RES-')) {
-                return false;
-            }
-
-            if (empty($reservationRoom->check_in_date) || empty($reservationRoom->check_out_date)) {
-                return false;
-            }
-
-            $checkIn = Carbon::parse((string) $reservationRoom->check_in_date)->startOfDay();
-            $checkOut = Carbon::parse((string) $reservationRoom->check_out_date)->startOfDay();
-
-            // Regla: en el dia de checkout NO mostrar etiqueta.
-            return $selectedDateNormalized->gte($checkIn) && $selectedDateNormalized->lt($checkOut);
-        });
-
-        if ($reservationRoomForDate && !empty($reservationRoomForDate->reservation)) {
-            $reservationBadge = $reservationRoomForDate->reservation;
-        }
-    }
-
-    $reservationBadgeCode = strtoupper(trim((string) ($reservationBadge->reservation_code ?? '')));
-    $hasReservationBadge = str_starts_with($reservationBadgeCode, 'RES-');
     $isQuickReserved = (bool) ($room->is_quick_reserved ?? false);
     $pendingCheckinReservation = $room->pending_checkin_reservation ?? $room->future_reservation ?? null;
     $pendingCheckinReservationCode = strtoupper(trim((string) ($pendingCheckinReservation->reservation_code ?? '')));
     $isPendingReservation = $pendingCheckinReservation && str_starts_with($pendingCheckinReservationCode, 'RES-');
+    $hasStayInfo = $stay && $stay->reservation;
+    $reservationBadge = !$hasStayInfo && $isPendingReservation ? $pendingCheckinReservation : null;
+    $reservationBadgeCode = strtoupper(trim((string) ($reservationBadge->reservation_code ?? '')));
+    $hasReservationBadge = str_starts_with($reservationBadgeCode, 'RES-');
 @endphp
 
 <tr
