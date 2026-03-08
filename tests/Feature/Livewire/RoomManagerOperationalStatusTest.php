@@ -2,6 +2,7 @@
 
 namespace Tests\Feature\Livewire;
 
+use App\Enums\RoomDisplayStatus;
 use App\Livewire\RoomManager;
 use App\Models\Room;
 use App\Services\RoomAvailabilityService;
@@ -233,6 +234,46 @@ class RoomManagerOperationalStatusTest extends TestCase
 
         $this->assertSame('limpia', $room->fresh()->cleaningStatus($operationalDate)['code']);
         $this->assertSame('limpia', $room->fresh()->cleaningStatus($operationalDate->copy()->addDay())['code']);
+    }
+
+    #[Test]
+    public function checkout_after_midnight_within_the_same_operational_day_leaves_the_room_pending_cleaning(): void
+    {
+        Carbon::setTestNow(Carbon::parse('2026-03-08 01:30:00', 'America/Bogota'));
+
+        $operationalDate = HotelTime::currentOperationalDate();
+        $room = $this->createRoom('402');
+        $room->update(['last_cleaned_at' => null]);
+
+        $reservationId = DB::table('reservations')->insertGetId([
+            'reservation_code' => 'RES-402',
+            'created_at' => now(),
+            'updated_at' => now(),
+            'deleted_at' => null,
+        ]);
+
+        DB::table('reservation_rooms')->insert([
+            'reservation_id' => $reservationId,
+            'room_id' => $room->id,
+            'check_in_date' => $operationalDate->copy()->subDay()->toDateString(),
+            'check_out_date' => $operationalDate->toDateString(),
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+
+        DB::table('stays')->insert([
+            'reservation_id' => $reservationId,
+            'room_id' => $room->id,
+            'check_in_at' => $operationalDate->copy()->subDay()->setTime(15, 0),
+            'check_out_at' => $operationalDate->copy()->addDay()->setTime(1, 0),
+            'status' => 'finished',
+        ]);
+
+        $freshRoom = $room->fresh();
+
+        $this->assertSame('pendiente', $freshRoom->cleaningStatus($operationalDate)['code']);
+        $this->assertSame('pending_cleaning', $freshRoom->getOperationalStatus($operationalDate));
+        $this->assertSame(RoomDisplayStatus::SUCIA, $freshRoom->getDisplayStatus($operationalDate));
     }
 
     private function createRoom(string $roomNumber): Room

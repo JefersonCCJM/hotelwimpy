@@ -224,13 +224,14 @@ class RoomAvailabilityService
             return RoomDisplayStatus::MANTENIMIENTO;
         }
 
-        // Priority 2: Active stay = occupied
-        if ($this->isOccupiedOn($date)) {
+        $operationalStatus = $this->room->getOperationalStatus($date);
+
+        // Priority 2 and 3: Keep display state aligned with operational state.
+        if ($operationalStatus === 'occupied') {
             return RoomDisplayStatus::OCUPADA;
         }
 
-        // Priority 3: Pending checkout
-        if ($this->hasPendingCheckoutOn($date)) {
+        if ($operationalStatus === 'pending_checkout') {
             return RoomDisplayStatus::PENDIENTE_CHECKOUT;
         }
 
