@@ -1717,7 +1717,7 @@ class RoomManager extends Component
                 ];
             }
 
-            if ($room->getAvailabilityService()->getStayForDate($dateToCheck) !== null
+            if ($this->roomHasStayConflictOnOperationalDate($room, $dateToCheck)
                 || $this->roomHasReservationConflictOnOperationalDate($room, $dateToCheck)
                 || $room->isInMaintenance($dateToCheck)) {
                 return [
@@ -1730,16 +1730,53 @@ class RoomManager extends Component
         return ['valid' => true, 'message' => null];
     }
 
+    private function roomHasStayConflictOnOperationalDate(Room $room, Carbon $date): bool
+    {
+        $operationalDate = $date->copy()->startOfDay();
+        $operationalStart = HotelTime::startOfOperationalDay($operationalDate);
+        $operationalEnd = HotelTime::endOfOperationalDay($operationalDate);
+
+        return Stay::query()
+            ->where('room_id', (int) $room->id)
+            ->whereIn('status', ['active', 'pending_checkout'])
+            ->where('check_in_at', '<=', $operationalEnd)
+            ->where(function ($query) use ($operationalStart) {
+                $query->whereNull('check_out_at')
+                    ->orWhere('check_out_at', '>=', $operationalStart);
+            })
+            ->exists();
+    }
+
     private function roomHasReservationConflictOnOperationalDate(Room $room, Carbon $date): bool
     {
-        return ReservationRoom::query()
+        $query = ReservationRoom::query()
             ->where('room_id', (int) $room->id)
             ->whereDate('check_in_date', '<=', $date->toDateString())
             ->whereDate('check_out_date', '>', $date->toDateString())
             ->whereHas('reservation', function ($query) {
                 $query->whereNull('deleted_at');
             })
-            ->exists();
+            ->whereDoesntHave('reservation.stays', function ($stayQuery) use ($room) {
+                $stayQuery->where('room_id', (int) $room->id)
+                    ->whereNotNull('check_in_at');
+            });
+
+        if (Schema::hasTable('reservation_statuses')) {
+            $excludedStatusIds = array_values(array_filter([
+                $this->resolveCheckedOutReservationStatusId(),
+                $this->resolveCancelledReservationStatusId(),
+            ]));
+
+            if ($excludedStatusIds !== []) {
+                $query->whereHas('reservation', function ($reservationQuery) use ($excludedStatusIds) {
+                    $reservationQuery
+                        ->whereNull('deleted_at')
+                        ->whereNotIn('status_id', $excludedStatusIds);
+                });
+            }
+        }
+
+        return $query->exists();
     }
 
     private function moveQuickReservationMarker(int $currentRoomId, int $newRoomId, Carbon $selectedDate): void

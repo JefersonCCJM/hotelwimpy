@@ -68,7 +68,7 @@
             x-transition:leave-start="transform opacity-100 scale-100"
             x-transition:leave-end="transform opacity-0 scale-95"
             x-cloak
-            class="absolute bottom-full left-0 z-50 mb-1 w-48 bg-white rounded-lg shadow-lg border border-gray-200 py-1"
+            class="absolute bottom-full left-0 z-50 mb-1 w-64 bg-white rounded-lg shadow-lg border border-gray-200 py-1"
             style="display: none;">
             <button
                 type="button"
@@ -77,9 +77,9 @@
                 wire:target="updateCleaningStatus"
                 @click="showDropdown = false"
                 @disabled($cleaningStatus['code'] === 'limpia')
-                class="w-full text-left px-4 py-2 text-sm font-semibold text-gray-700 hover:bg-emerald-50 transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center space-x-2 @if($cleaningStatus['code'] === 'limpia') bg-emerald-50 text-emerald-700 @endif">
-                <i class="fas fa-check-circle text-emerald-600"></i>
-                <span>Marcar como limpia</span>
+                class="w-full text-left px-4 py-2 text-sm font-semibold text-gray-700 hover:bg-emerald-50 transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-start gap-2 @if($cleaningStatus['code'] === 'limpia') bg-emerald-50 text-emerald-700 @endif">
+                <i class="fas fa-check-circle mt-0.5 shrink-0 text-emerald-600"></i>
+                <span class="whitespace-normal leading-5">Marcar como limpia</span>
             </button>
 
             <button
@@ -89,9 +89,9 @@
                 wire:target="updateCleaningStatus"
                 @click="showDropdown = false"
                 @disabled($cleaningStatus['code'] === 'pendiente')
-                class="w-full text-left px-4 py-2 text-sm font-semibold text-gray-700 hover:bg-yellow-50 transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center space-x-2 @if($cleaningStatus['code'] === 'pendiente') bg-yellow-50 text-yellow-700 @endif">
-                <i class="fas fa-broom text-yellow-600"></i>
-                <span>Marcar como pendiente</span>
+                class="w-full text-left px-4 py-2 text-sm font-semibold text-gray-700 hover:bg-yellow-50 transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-start gap-2 @if($cleaningStatus['code'] === 'pendiente') bg-yellow-50 text-yellow-700 @endif">
+                <i class="fas fa-broom mt-0.5 shrink-0 text-yellow-600"></i>
+                <span class="whitespace-normal leading-5">Marcar como pendiente</span>
             </button>
 
             <button
@@ -101,9 +101,9 @@
                 wire:target="updateCleaningStatus"
                 @click="showDropdown = false"
                 @disabled($cleaningStatus['code'] === 'mantenimiento')
-                class="w-full text-left px-4 py-2 text-sm font-semibold text-gray-700 hover:bg-amber-50 transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center space-x-2 @if($cleaningStatus['code'] === 'mantenimiento') bg-amber-50 text-amber-700 @endif">
-                <i class="fas fa-screwdriver-wrench text-amber-600"></i>
-                <span>Marcar como mantenimiento</span>
+                class="w-full text-left px-4 py-2 text-sm font-semibold text-gray-700 hover:bg-amber-50 transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-start gap-2 @if($cleaningStatus['code'] === 'mantenimiento') bg-amber-50 text-amber-700 @endif">
+                <i class="fas fa-screwdriver-wrench mt-0.5 shrink-0 text-amber-600"></i>
+                <span class="whitespace-normal leading-5">Marcar como mantenimiento</span>
             </button>
         </div>
     @endif

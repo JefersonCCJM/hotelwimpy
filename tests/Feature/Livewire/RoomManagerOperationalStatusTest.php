@@ -161,6 +161,53 @@ class RoomManagerOperationalStatusTest extends TestCase
     }
 
     #[Test]
+    public function finished_reservations_with_a_stay_in_that_room_do_not_block_maintenance(): void
+    {
+        Carbon::setTestNow(Carbon::parse('2026-03-07 10:00:00', 'America/Bogota'));
+
+        $operationalDate = HotelTime::currentOperationalDate();
+        $room = $this->createRoom('351');
+
+        $reservationId = DB::table('reservations')->insertGetId([
+            'reservation_code' => 'RES-351',
+            'created_at' => now(),
+            'updated_at' => now(),
+            'deleted_at' => null,
+        ]);
+
+        DB::table('reservation_rooms')->insert([
+            'reservation_id' => $reservationId,
+            'room_id' => $room->id,
+            'check_in_date' => $operationalDate->toDateString(),
+            'check_out_date' => $operationalDate->copy()->addDay()->toDateString(),
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+
+        DB::table('stays')->insert([
+            'reservation_id' => $reservationId,
+            'room_id' => $room->id,
+            'check_in_at' => $operationalDate->copy()->subDay()->setTime(15, 0),
+            'check_out_at' => $operationalDate->copy()->setTime(7, 0),
+            'status' => 'finished',
+        ]);
+
+        $component = new RoomManager();
+        $component->date = $operationalDate->copy();
+        $component->currentDate = $operationalDate->copy();
+
+        $component->updateCleaningStatus($room->id, 'mantenimiento');
+
+        $this->assertTrue(
+            DB::table('room_operational_statuses')
+                ->where('room_id', $room->id)
+                ->whereDate('operational_date', $operationalDate->toDateString())
+                ->where('cleaning_override_status', 'mantenimiento')
+                ->exists()
+        );
+    }
+
+    #[Test]
     public function marking_the_room_clean_removes_the_carried_maintenance_for_the_next_day(): void
     {
         Carbon::setTestNow(Carbon::parse('2026-03-07 10:00:00', 'America/Bogota'));

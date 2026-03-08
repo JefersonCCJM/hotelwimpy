@@ -151,6 +151,23 @@ class Room extends Model
     {
         return $this->getAvailabilityService()->getStayForDate($date) !== null;
     }
+
+    private function hasOperationalOccupancyOn(Carbon $date): bool
+    {
+        $operationalDate = $date->copy()->startOfDay();
+        $operationalStart = HotelTime::startOfOperationalDay($operationalDate);
+        $operationalEnd = HotelTime::endOfOperationalDay($operationalDate);
+
+        return $this->stays()
+            ->whereIn('status', ['active', 'pending_checkout'])
+            ->where('check_in_at', '<=', $operationalEnd)
+            ->where(function ($query) use ($operationalStart) {
+                $query->whereNull('check_out_at')
+                    ->orWhere('check_out_at', '>=', $operationalStart);
+            })
+            ->exists();
+    }
+
     /**
      * Get the active reservation for a specific date.
      * DEPRECATED: Use RoomAvailabilityService instead.
@@ -371,7 +388,7 @@ class Room extends Model
         }
 
         // Check if room is currently occupied (Dependency Inversion - uses abstraction)
-        $isOccupied = $this->isOccupied($date);
+        $isOccupied = $this->hasOperationalOccupancyOn($date);
 
         // If room is NOT occupied, check if there was a recent checkout that needs cleaning
         if (!$isOccupied) {
@@ -400,9 +417,9 @@ class Room extends Model
 
         // If room is OCCUPIED, check if cleaning occurred before check-in
         // Get active reservation to compare cleaning date with check-in date
-        $reservation = $this->reservations()
-            ->where('check_in_date', '<=', $date)
-            ->where('check_out_date', '>', $date)
+        $reservationRoom = $this->reservationRooms()
+            ->whereDate('check_in_date', '<=', $date->toDateString())
+            ->whereDate('check_out_date', '>', $date->toDateString())
             ->orderBy('check_in_date', 'asc')
             ->first();
 
@@ -415,8 +432,8 @@ class Room extends Model
 
         // If room was cleaned BEFORE check-in, it stays clean during the stay
         // Hotel rule: cleaning before guest arrival is valid for the entire initial stay
-        if ($reservation) {
-            $checkInDate = \Carbon\Carbon::parse($reservation->check_in_date)->startOfDay();
+        if ($reservationRoom?->check_in_date) {
+            $checkInDate = \Carbon\Carbon::parse($reservationRoom->check_in_date)->startOfDay();
 
             // If cleaning occurred before check-in, room is clean (no 24-hour rule applies)
             if ($cleaningDateNormalized->lt($checkInDate)) {
