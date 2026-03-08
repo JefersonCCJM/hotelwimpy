@@ -20,6 +20,7 @@ use App\Models\ShiftHandover;
 use App\Models\Stay;
 use App\Enums\ShiftHandoverStatus;
 use App\Services\AuditService;
+use App\Services\RoomOperationalStatusService;
 use App\Services\ReservationCancellationService;
 use App\Models\StayNight;
 use App\Enums\RoomDisplayStatus;
@@ -28,13 +29,14 @@ use Carbon\Carbon;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
+use Illuminate\Support\Facades\Validator;
 use Illuminate\Support\Str;
 
 class RoomManager extends Component
 {
     use WithPagination;
     private const ALLOWED_STATUS_FILTERS = ['libre', 'ocupada', 'pendiente_checkout'];
-    private const ALLOWED_CLEANING_STATUS_FILTERS = ['limpia', 'pendiente'];
+    private const ALLOWED_CLEANING_STATUS_FILTERS = ['limpia', 'pendiente', 'mantenimiento'];
 
     public function dehydrate(): void
     {
@@ -712,6 +714,7 @@ class RoomManager extends Component
 
         $startOfMonth = $this->currentDate->copy()->startOfMonth();
         $endOfMonth = $this->currentDate->copy()->endOfMonth();
+        $endOfMonthWithBuffer = $endOfMonth->copy()->addDay();
 
         return $query->with([
             'roomType',
@@ -724,6 +727,10 @@ class RoomManager extends Component
                   }]);
             },
             'rates',
+            'operationalStatuses' => function ($q) use ($startOfMonth, $endOfMonthWithBuffer) {
+                $q->whereDate('operational_date', '>=', $startOfMonth->toDateString())
+                    ->whereDate('operational_date', '<=', $endOfMonthWithBuffer->toDateString());
+            },
             'maintenanceBlocks' => function($q) {
                 $q->where('status_id', function($subq) {
                     $subq->select('id')->from('room_maintenance_block_statuses')
@@ -1664,6 +1671,10 @@ class RoomManager extends Component
 
     private function isRoomAvailableForChange(Room $room, Carbon $selectedDate, int $reservationId): bool
     {
+        if ($room->isInMaintenance($selectedDate)) {
+            return false;
+        }
+
         if ($room->getOperationalStatus($selectedDate) !== 'free_clean') {
             return false;
         }
@@ -1677,6 +1688,58 @@ class RoomManager extends Component
         }
 
         return $this->getPendingCheckInReservationForRoom($room, $selectedDate) === null;
+    }
+
+    private function canApplyMaintenanceToRoom(Room $room, Carbon $selectedDate): array
+    {
+        $selectedDate = $selectedDate->copy()->startOfDay();
+        $currentCleaningCode = data_get($room->cleaningStatus($selectedDate), 'code');
+        $baseCleaningCode = data_get($room->baseCleaningStatus($selectedDate), 'code');
+        $operationalStatus = $room->getOperationalStatus($selectedDate);
+
+        if ($operationalStatus !== 'free_clean' || $baseCleaningCode !== 'limpia') {
+            return [
+                'valid' => false,
+                'message' => 'Solo se puede poner en mantenimiento una habitacion libre y limpia.',
+            ];
+        }
+
+        $conflictStart = $currentCleaningCode === 'mantenimiento'
+            ? $selectedDate->copy()->addDay()
+            : $selectedDate->copy();
+        $conflictEnd = $selectedDate->copy()->addDays(2);
+
+        for ($dateToCheck = $conflictStart->copy(); $dateToCheck->lt($conflictEnd); $dateToCheck->addDay()) {
+            if ($this->roomHasQuickReservationMarker((int) $room->id, $dateToCheck)) {
+                return [
+                    'valid' => false,
+                    'message' => 'No se puede poner en mantenimiento porque la habitacion ya esta marcada como reservada en el rango afectado.',
+                ];
+            }
+
+            if ($room->getAvailabilityService()->getStayForDate($dateToCheck) !== null
+                || $this->roomHasReservationConflictOnOperationalDate($room, $dateToCheck)
+                || $room->isInMaintenance($dateToCheck)) {
+                return [
+                    'valid' => false,
+                    'message' => 'No se puede poner en mantenimiento porque la habitacion ya tiene reserva o bloqueo en el rango afectado.',
+                ];
+            }
+        }
+
+        return ['valid' => true, 'message' => null];
+    }
+
+    private function roomHasReservationConflictOnOperationalDate(Room $room, Carbon $date): bool
+    {
+        return ReservationRoom::query()
+            ->where('room_id', (int) $room->id)
+            ->whereDate('check_in_date', '<=', $date->toDateString())
+            ->whereDate('check_out_date', '>', $date->toDateString())
+            ->whereHas('reservation', function ($query) {
+                $query->whereNull('deleted_at');
+            })
+            ->exists();
     }
 
     private function moveQuickReservationMarker(int $currentRoomId, int $newRoomId, Carbon $selectedDate): void
@@ -2190,9 +2253,18 @@ class RoomManager extends Component
             // Validar por estado de limpieza real (SSOT de limpieza)
             $selectedDate = $this->getSelectedDate();
             $cleaningCode = data_get($room->cleaningStatus($selectedDate), 'code');
-            if ($cleaningCode !== 'pendiente') {
+            if (!in_array($cleaningCode, ['pendiente', 'mantenimiento'], true)) {
                 $this->dispatch('notify', type: 'error', message: 'La habitación no requiere limpieza.');
                 return;
+            }
+
+            if ($cleaningCode === 'mantenimiento' && !$room->hasOperationalMaintenanceOverrideOn($selectedDate)) {
+                $this->dispatch('notify', type: 'error', message: 'Esta habitacion tiene un bloqueo de mantenimiento activo que no se puede cerrar desde este menu.');
+                return;
+            }
+
+            if ($room->hasOperationalMaintenanceOverrideOn($selectedDate)) {
+                app(RoomOperationalStatusService::class)->clearMaintenance($room, $selectedDate, Auth::id());
             }
 
             $room->last_cleaned_at = now();
@@ -5075,6 +5147,16 @@ class RoomManager extends Component
             }
 
             foreach ($roomIds as $assignedRoomId) {
+                $assignedRoom = $reservation->reservationRooms
+                    ->firstWhere('room_id', $assignedRoomId)?->room
+                    ?? Room::find($assignedRoomId);
+
+                if ($assignedRoom && $assignedRoom->isInMaintenance($selectedDate)) {
+                    $roomNumber = $assignedRoom->room_number ?? (string) $assignedRoomId;
+                    $this->dispatch('notify', type: 'error', message: "La habitacion {$roomNumber} esta en mantenimiento y no permite check-in.");
+                    return;
+                }
+
                 $conflictingStay = Stay::query()
                     ->where('room_id', $assignedRoomId)
                     ->whereIn('status', ['active', 'pending_checkout'])
@@ -5165,6 +5247,11 @@ class RoomManager extends Component
         if ($room) {
             $selectedDate = $this->getSelectedDate();
             $cleaningCode = data_get($room->cleaningStatus($selectedDate), 'code');
+            if ($cleaningCode === 'mantenimiento') {
+                $this->dispatch('notify', type: 'error', message: 'No se puede arrendar esta habitacion mientras este en mantenimiento.');
+                return;
+            }
+
             if ($cleaningCode === 'pendiente') {
                 $this->dispatch('notify', type: 'error', message: 'No se puede arrendar esta habitacion mientras este pendiente por aseo. Marquela como limpia primero.');
                 return;
@@ -5401,6 +5488,10 @@ class RoomManager extends Component
             // Bloqueo de aseo: no permitir arrendar habitaciones pendientes por limpieza.
             $checkInOperationalDate = Carbon::parse($validated['check_in_date']);
             $cleaningCode = data_get($room->cleaningStatus($checkInOperationalDate), 'code');
+            if ($cleaningCode === 'mantenimiento') {
+                throw new \RuntimeException('No se puede arrendar esta habitacion porque esta en mantenimiento.');
+            }
+
             if ($cleaningCode === 'pendiente') {
                 throw new \RuntimeException('No se puede arrendar esta habitacion porque esta pendiente por aseo. Marquela como limpia antes de continuar.');
             }
@@ -6760,9 +6851,35 @@ class RoomManager extends Component
             ]);
 
             // Validar que el estado sea válido
-            if (!in_array($status, ['limpia', 'pendiente'])) {
+            if (!in_array($status, ['limpia', 'pendiente', 'mantenimiento'], true)) {
                 $this->dispatch('notify', type: 'error', message: 'Estado de limpieza inválido.');
                 return;
+            }
+
+            $operationalStatusService = app(RoomOperationalStatusService::class);
+            $currentCleaningCode = data_get($room->cleaningStatus($selectedDate), 'code');
+            $hasDailyMaintenanceOverride = $room->hasOperationalMaintenanceOverrideOn($selectedDate);
+
+            if ($status !== 'mantenimiento' && $currentCleaningCode === 'mantenimiento' && !$hasDailyMaintenanceOverride) {
+                $this->dispatch('notify', type: 'error', message: 'Esta habitacion tiene un bloqueo de mantenimiento activo que no se puede cerrar desde este menu.');
+                return;
+            }
+
+            if ($status === 'mantenimiento') {
+                $validation = $this->canApplyMaintenanceToRoom($room, $selectedDate);
+                if (!($validation['valid'] ?? false)) {
+                    $this->dispatch('notify', type: 'error', message: (string) ($validation['message'] ?? 'No fue posible poner la habitacion en mantenimiento.'));
+                    return;
+                }
+
+                $operationalStatusService->markMaintenance($room, $selectedDate, Auth::id());
+                $this->dispatch('notify', type: 'success', message: 'Habitacion marcada en mantenimiento para el dia operativo y el siguiente.');
+                $this->loadRooms();
+                return;
+            }
+
+            if ($hasDailyMaintenanceOverride) {
+                $operationalStatusService->clearMaintenance($room, $selectedDate, Auth::id());
             }
 
             // Update cleaning status based on the status parameter
@@ -6770,6 +6887,7 @@ class RoomManager extends Component
                 $room->last_cleaned_at = now();
                 $room->save();
                 $this->dispatch('notify', type: 'success', message: 'Habitación marcada como limpia.');
+                $this->dispatch('room-marked-clean', roomId: $room->id);
             } elseif ($status === 'pendiente') {
                 $room->last_cleaned_at = null;
                 $room->save();
@@ -6786,6 +6904,49 @@ class RoomManager extends Component
                 'error' => $e->getMessage()
             ]);
         }
+    }
+
+    public function saveRoomDailyObservation(int $roomId, ?string $observation = null): void
+    {
+        if ($this->blockEditsForPastDate()) {
+            return;
+        }
+
+        $validator = Validator::make(
+            ['observation' => $observation],
+            ['observation' => ['nullable', 'string', 'max:500']]
+        );
+
+        if ($validator->fails()) {
+            $this->dispatch('notify', type: 'error', message: $validator->errors()->first('observation'));
+            return;
+        }
+
+        $room = Room::find($roomId);
+        if (!$room) {
+            $this->dispatch('notify', type: 'error', message: 'Habitacion no encontrada.');
+            return;
+        }
+
+        $selectedDate = $this->getSelectedDate()->startOfDay();
+        $normalizedObservation = trim((string) ($validator->validated()['observation'] ?? ''));
+
+        app(RoomOperationalStatusService::class)->saveObservation(
+            $room,
+            $selectedDate,
+            $normalizedObservation !== '' ? $normalizedObservation : null,
+            Auth::id()
+        );
+
+        $this->dispatch(
+            'notify',
+            type: 'success',
+            message: $normalizedObservation !== ''
+                ? 'Observacion diaria guardada.'
+                : 'Observacion diaria eliminada.'
+        );
+
+        $this->loadRooms();
     }
 
     public function confirmReleaseRoom($roomId)
@@ -7631,6 +7792,7 @@ class RoomManager extends Component
                     $matchesCleaningStatus = match ((string) $this->cleaningStatusFilter) {
                         'limpia' => $cleaningCode === 'limpia',
                         'pendiente' => $cleaningCode === 'pendiente',
+                        'mantenimiento' => $cleaningCode === 'mantenimiento',
                         default => true,
                     };
 

@@ -8,6 +8,7 @@ use Illuminate\Database\Eloquent\Relations\HasMany;
 use App\Enums\RoomDisplayStatus;
 use App\Support\HotelTime;
 use Carbon\Carbon;
+use Illuminate\Support\Facades\Schema;
 
 class Room extends Model
 {
@@ -99,6 +100,11 @@ class Room extends Model
     public function dailyStatuses(): HasMany
     {
         return $this->hasMany(RoomDailyStatus::class);
+    }
+
+    public function operationalStatuses(): HasMany
+    {
+        return $this->hasMany(RoomOperationalStatus::class);
     }
 
     public function quickReservations(): HasMany
@@ -198,11 +204,42 @@ class Room extends Model
      *
      * @return bool
      */
-    public function isInMaintenance(): bool
+    public function isInMaintenance(?Carbon $date = null): bool
     {
+        $date = ($date ?? HotelTime::currentOperationalDate())->copy()->startOfDay();
+        $operationalStart = HotelTime::startOfOperationalDay($date);
+        $operationalEnd = HotelTime::endOfOperationalDay($date);
+
+        if ($this->hasOperationalMaintenanceOverrideOn($date)) {
+            return true;
+        }
+
+        if (!Schema::hasTable('room_maintenance_blocks') || !Schema::hasTable('room_maintenance_block_statuses')) {
+            return false;
+        }
+
+        if ($this->relationLoaded('maintenanceBlocks')) {
+            return $this->maintenanceBlocks->contains(function (RoomMaintenanceBlock $block) use ($operationalStart, $operationalEnd): bool {
+                $startAt = $block->start_at instanceof Carbon
+                    ? $block->start_at
+                    : Carbon::parse((string) $block->start_at);
+
+                $endAt = $block->end_at instanceof Carbon
+                    ? $block->end_at
+                    : ($block->end_at ? Carbon::parse((string) $block->end_at) : null);
+
+                return $startAt->lte($operationalEnd) && ($endAt === null || $endAt->gte($operationalStart));
+            });
+        }
+
         return $this->maintenanceBlocks()
-            ->whereHas('status', function($q) {
+            ->whereHas('status', function ($q) {
                 $q->where('code', 'active');
+            })
+            ->where('start_at', '<=', $operationalEnd)
+            ->where(function ($query) use ($operationalStart) {
+                $query->whereNull('end_at')
+                    ->orWhere('end_at', '>=', $operationalStart);
             })
             ->exists();
     }
@@ -229,6 +266,18 @@ class Room extends Model
      * @return array{code: string, label: string, color: string, icon: string}
      */
     public function cleaningStatus(?\Carbon\Carbon $date = null): array
+    {
+        $date = $date ?? HotelTime::currentOperationalDate();
+        $date = $date->copy()->startOfDay();
+
+        if ($this->isInMaintenance($date)) {
+            return $this->getMaintenanceStatus();
+        }
+
+        return $this->baseCleaningStatus($date);
+    }
+
+    public function baseCleaningStatus(?\Carbon\Carbon $date = null): array
     {
         $date = $date ?? HotelTime::currentOperationalDate();
         $today = HotelTime::currentOperationalDate();
@@ -416,6 +465,16 @@ class Room extends Model
             'label' => 'Limpia',
             'color' => 'bg-green-100 text-green-800',
             'icon' => 'fa-check-circle',
+        ];
+    }
+
+    private function getMaintenanceStatus(): array
+    {
+        return [
+            'code' => 'mantenimiento',
+            'label' => 'Mantenimiento',
+            'color' => 'bg-amber-100 text-amber-800',
+            'icon' => 'fa-screwdriver-wrench',
         ];
     }
 
@@ -786,6 +845,44 @@ class Room extends Model
     public function getCleaningStatusAttribute(): array
     {
         return $this->cleaningStatus();
+    }
+
+    public function dailyObservation(?Carbon $date = null): ?string
+    {
+        return $this->getOperationalStatusRecordForDate($date)?->observation;
+    }
+
+    public function hasOperationalMaintenanceOverrideOn(?Carbon $date = null): bool
+    {
+        return $this->getOperationalStatusRecordForDate($date)?->cleaning_override_status === 'mantenimiento';
+    }
+
+    public function getOperationalStatusRecordForDate(?Carbon $date = null): ?RoomOperationalStatus
+    {
+        $date = ($date ?? HotelTime::currentOperationalDate())->copy()->startOfDay();
+        $dateString = $date->toDateString();
+
+        if (!Schema::hasTable('room_operational_statuses')) {
+            return null;
+        }
+
+        if ($this->relationLoaded('operationalStatuses')) {
+            $loadedStatus = $this->operationalStatuses->first(function (RoomOperationalStatus $status) use ($dateString): bool {
+                $statusDate = $status->operational_date instanceof Carbon
+                    ? $status->operational_date->toDateString()
+                    : (string) $status->operational_date;
+
+                return $statusDate === $dateString;
+            });
+
+            if ($loadedStatus) {
+                return $loadedStatus;
+            }
+        }
+
+        return $this->operationalStatuses()
+            ->whereDate('operational_date', $dateString)
+            ->first();
     }
 
     /**

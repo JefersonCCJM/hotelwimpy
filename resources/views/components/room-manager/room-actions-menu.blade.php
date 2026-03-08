@@ -19,11 +19,12 @@
     $canManageRooms = auth()->check() && auth()->user()->hasRole('Administrador');
     $isQuickReserved = (bool) ($room->is_quick_reserved ?? false);
     $hasPendingReservation = !empty($room->pending_checkin_reservation) || !empty($room->future_reservation);
+    $isInMaintenance = $room->isInMaintenance($selectedDate);
 @endphp
 
 <div class="flex items-center justify-end gap-1.5">
     {{-- ESTADO: free_clean (Libre y limpia) --}}
-    @if($operationalStatus === 'free_clean' && $cleaningCode === 'limpia')
+    @if($operationalStatus === 'free_clean' && $cleaningCode === 'limpia' && !$isInMaintenance)
         @if($isFutureDate)
             {{-- Cambiar habitacion de reserva futura pendiente --}}
             @if($room->future_reservation)
@@ -96,7 +97,7 @@
     @endif
 
     {{-- ESTADO: occupied (Ocupada) - NO pendiente de checkout --}}
-    @if($operationalStatus === 'occupied' && !$isPendingCheckout && $canPerformActions && $isOperationalToday)
+    @if($operationalStatus === 'occupied' && !$isPendingCheckout && $canPerformActions && $isOperationalToday && !$isInMaintenance)
         {{-- Cambiar habitacion --}}
         <button type="button"
             wire:click="openChangeRoom({{ $room->id }})"
@@ -117,7 +118,7 @@
     @endif
 
     {{-- ESTADO: pending_checkout (Pendiente por checkout) - SOLO PARA HOY --}}
-    @if($operationalStatus === 'pending_checkout' && $canPerformActions && $isOperationalToday)
+    @if($operationalStatus === 'pending_checkout' && $canPerformActions && $isOperationalToday && !$isInMaintenance)
         {{-- Cambiar habitacion --}}
         <button type="button"
             wire:click="openChangeRoom({{ $room->id }})"
@@ -161,11 +162,11 @@
         </button>
     @endif --}}
     {{-- Marcar como limpia: solo si cleaningCode es pendiente --}}
-    @if($cleaningCode === 'pendiente' && !in_array($operationalStatus, ['occupied', 'pending_checkout'], true) && $canPerformActions && $isOperationalToday)
+    @if(in_array($cleaningCode, ['pendiente', 'mantenimiento'], true) && !in_array($operationalStatus, ['occupied', 'pending_checkout'], true) && $canPerformActions && $isOperationalToday)
         <button type="button"
             wire:click="markRoomAsClean({{ $room->id }})"
             wire:loading.attr="disabled"
-            title="Marcar como limpia"
+            title="{{ $cleaningCode === 'mantenimiento' ? 'Cerrar mantenimiento y marcar como limpia' : 'Marcar como limpia' }}"
             class="inline-flex items-center justify-center w-8 h-8 rounded-lg border border-green-200 bg-green-50 text-green-600 hover:bg-green-100 hover:border-green-300 transition-colors focus:outline-none focus:ring-2 focus:ring-green-500 disabled:opacity-50">
             <i class="fas fa-broom text-sm"></i>
             <span class="sr-only">Marcar como limpia</span>

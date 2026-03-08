@@ -22,6 +22,11 @@
             'icon' => 'fa-broom',
             'color' => 'bg-yellow-100 text-yellow-700 border border-yellow-200',
         ],
+        'mantenimiento' => [
+            'label' => 'Mantenimiento',
+            'icon' => 'fa-screwdriver-wrench',
+            'color' => 'bg-amber-100 text-amber-700 border border-amber-200',
+        ],
         default => [
             'label' => 'Limpia',
             'icon' => 'fa-check-circle',
@@ -87,6 +92,18 @@
                 class="w-full text-left px-4 py-2 text-sm font-semibold text-gray-700 hover:bg-yellow-50 transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center space-x-2 @if($cleaningStatus['code'] === 'pendiente') bg-yellow-50 text-yellow-700 @endif">
                 <i class="fas fa-broom text-yellow-600"></i>
                 <span>Marcar como pendiente</span>
+            </button>
+
+            <button
+                type="button"
+                wire:click="updateCleaningStatus({{ $room->id }}, 'mantenimiento')"
+                wire:loading.attr="disabled"
+                wire:target="updateCleaningStatus"
+                @click="showDropdown = false"
+                @disabled($cleaningStatus['code'] === 'mantenimiento')
+                class="w-full text-left px-4 py-2 text-sm font-semibold text-gray-700 hover:bg-amber-50 transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center space-x-2 @if($cleaningStatus['code'] === 'mantenimiento') bg-amber-50 text-amber-700 @endif">
+                <i class="fas fa-screwdriver-wrench text-amber-600"></i>
+                <span>Marcar como mantenimiento</span>
             </button>
         </div>
     @endif

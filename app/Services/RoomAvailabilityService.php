@@ -3,6 +3,8 @@
 namespace App\Services;
 
 use App\Models\Room;
+use App\Models\RoomMaintenanceBlock;
+use App\Models\RoomOperationalStatus;
 use App\Models\Stay;
 use App\Models\ReservationRoom;
 use App\Enums\RoomDisplayStatus;
@@ -218,7 +220,7 @@ class RoomAvailabilityService
         $date = $date ?? HotelTime::currentOperationalDate();
 
         // Priority 1: Maintenance blocks everything
-        if ($this->room->isInMaintenance()) {
+        if ($this->room->isInMaintenance($date)) {
             return RoomDisplayStatus::MANTENIMIENTO;
         }
 
@@ -309,6 +311,12 @@ class RoomAvailabilityService
         ]);
 
         try {
+            $maintenanceConflict = $this->findMaintenanceConflict($roomId, $checkIn, $checkOut);
+            if ($maintenanceConflict !== null) {
+                Log::debug("❌ Habitación {$roomId} NO disponible - Mantenimiento en conflicto", $maintenanceConflict);
+                return false;
+            }
+
             // 1. Verificar stays que intersectan el rango para esta habitación
             $conflictingStay = $this->findConflictingStay($roomId, $checkIn, $checkOut, $excludeReservationId);
             if ($conflictingStay) {
@@ -500,6 +508,17 @@ class RoomAvailabilityService
         foreach ($allRooms as $room) {
             $roomId = $room->id;
 
+            $maintenanceConflict = $this->findMaintenanceConflict($roomId, $checkIn, $checkOut);
+            if ($maintenanceConflict !== null) {
+                $unavailable[] = [
+                    'roomId' => $roomId,
+                    'roomNumber' => $room->room_number,
+                    'reason' => 'maintenance_conflict',
+                    'details' => $maintenanceConflict,
+                ];
+                continue;
+            }
+
             $conflictingStay = $this->findConflictingStay($roomId, $checkIn, $checkOut, $excludeReservationId);
             if ($conflictingStay) {
                 $unavailable[] = [
@@ -538,6 +557,63 @@ class RoomAvailabilityService
     }
 
     /**
+     * Busca conflicto de mantenimiento para una habitacion en un rango operativo.
+     *
+     * @return array<string, mixed>|null
+     */
+    private function findMaintenanceConflict(int $roomId, Carbon $checkIn, Carbon $checkOut): ?array
+    {
+        $rangeStart = $checkIn->copy()->startOfDay();
+        $rangeEndExclusive = $checkOut->copy()->startOfDay();
+
+        if ($rangeEndExclusive->lte($rangeStart)) {
+            return null;
+        }
+
+        $dailyMaintenanceDate = RoomOperationalStatus::query()
+            ->where('room_id', $roomId)
+            ->where('cleaning_override_status', 'mantenimiento')
+            ->whereDate('operational_date', '>=', $rangeStart->toDateString())
+            ->whereDate('operational_date', '<', $rangeEndExclusive->toDateString())
+            ->orderBy('operational_date')
+            ->value('operational_date');
+
+        if ($dailyMaintenanceDate !== null) {
+            return [
+                'type' => 'daily_maintenance',
+                'operational_date' => Carbon::parse((string) $dailyMaintenanceDate)->toDateString(),
+            ];
+        }
+
+        $lastOperationalDate = $rangeEndExclusive->copy()->subDay()->startOfDay();
+        $operationalStart = HotelTime::startOfOperationalDay($rangeStart);
+        $operationalEnd = HotelTime::endOfOperationalDay($lastOperationalDate);
+
+        $block = RoomMaintenanceBlock::query()
+            ->where('room_id', $roomId)
+            ->whereHas('status', function ($query) {
+                $query->where('code', 'active');
+            })
+            ->where('start_at', '<=', $operationalEnd)
+            ->where(function ($query) use ($operationalStart) {
+                $query->whereNull('end_at')
+                    ->orWhere('end_at', '>=', $operationalStart);
+            })
+            ->orderBy('start_at')
+            ->first();
+
+        if ($block === null) {
+            return null;
+        }
+
+        return [
+            'type' => 'maintenance_block',
+            'start_at' => $block->start_at?->format('Y-m-d H:i:s'),
+            'end_at' => $block->end_at?->format('Y-m-d H:i:s'),
+        ];
+    }
+
+    /**
      * Busca stays en conflicto para una habitación y rango.
      * Incluye fallback a reservation_rooms.check_out_date si check_out_at es null.
      */
@@ -548,19 +624,24 @@ class RoomAvailabilityService
         ?int $excludeReservationId = null
     ): ?Stay
     {
+        $driver = DB::connection()->getDriverName();
+        $oneDayAfterCheckInSql = $driver === 'sqlite'
+            ? "datetime(check_in_at, '+1 day') > ?"
+            : 'DATE_ADD(check_in_at, INTERVAL 1 DAY) > ?';
+
         $query = Stay::query()
             ->where('room_id', $roomId)
             ->whereIn('status', ['active', 'pending_checkout'])
             ->where('check_in_at', '<', $checkOut)
-            ->where(function ($q) use ($checkIn, $roomId) {
+            ->where(function ($q) use ($checkIn, $roomId, $oneDayAfterCheckInSql) {
                 $q->where(function ($q2) use ($checkIn) {
                     $q2->whereNotNull('check_out_at')
                         ->where('check_out_at', '>', $checkIn);
-                })->orWhere(function ($q2) use ($checkIn, $roomId) {
+                })->orWhere(function ($q2) use ($checkIn, $roomId, $oneDayAfterCheckInSql) {
                     $q2->whereNull('check_out_at')
                         // Regla de negocio temporal:
                         // Si check_out_at es NULL, tratar la stay como de 1 noche.
-                        ->whereRaw('DATE_ADD(check_in_at, INTERVAL 1 DAY) > ?', [$checkIn->toDateTimeString()]);
+                        ->whereRaw($oneDayAfterCheckInSql, [$checkIn->toDateTimeString()]);
                 });
             })
             ->orderByDesc('check_in_at');
