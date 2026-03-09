@@ -276,6 +276,45 @@ class RoomManagerOperationalStatusTest extends TestCase
         $this->assertSame(RoomDisplayStatus::SUCIA, $freshRoom->getDisplayStatus($operationalDate));
     }
 
+    #[Test]
+    public function polling_advances_the_grid_when_following_the_current_operational_day(): void
+    {
+        Carbon::setTestNow(Carbon::parse('2026-03-08 05:59:00', 'America/Bogota'));
+
+        $component = new RoomManager();
+        $component->date = HotelTime::currentOperationalDate()->copy();
+        $component->currentDate = HotelTime::currentOperationalDate()->copy();
+        $component->followOperationalToday = true;
+
+        Carbon::setTestNow(Carbon::parse('2026-03-08 06:01:00', 'America/Bogota'));
+
+        $component->refreshRoomsPolling();
+
+        $this->assertSame('2026-03-08', $component->date->toDateString());
+        $this->assertSame('2026-03-08', $component->currentDate->toDateString());
+        $this->assertTrue($component->followOperationalToday);
+        $this->assertNotEmpty($component->daysInMonth);
+    }
+
+    #[Test]
+    public function polling_does_not_move_a_manual_historic_view_on_operational_day_rollover(): void
+    {
+        Carbon::setTestNow(Carbon::parse('2026-03-08 05:59:00', 'America/Bogota'));
+
+        $component = new RoomManager();
+        $component->date = Carbon::parse('2026-03-06');
+        $component->currentDate = Carbon::parse('2026-03-06');
+        $component->followOperationalToday = false;
+
+        Carbon::setTestNow(Carbon::parse('2026-03-08 06:01:00', 'America/Bogota'));
+
+        $component->refreshRoomsPolling();
+
+        $this->assertSame('2026-03-06', $component->date->toDateString());
+        $this->assertSame('2026-03-06', $component->currentDate->toDateString());
+        $this->assertFalse($component->followOperationalToday);
+    }
+
     private function createRoom(string $roomNumber): Room
     {
         return Room::query()->create([

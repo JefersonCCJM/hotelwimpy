@@ -48,6 +48,7 @@ class RoomManager extends Component
     public string $activeTab = 'rooms';
     public $currentDate = null;
     public $date = null;
+    public bool $followOperationalToday = true;
     public $search = '';
     public $statusFilter = null;
     public $cleaningStatusFilter = null;
@@ -647,6 +648,37 @@ class RoomManager extends Component
         return HotelTime::currentOperationalDate();
     }
 
+    private function rebuildDaysInMonth(): void
+    {
+        $currentDate = $this->currentDate instanceof Carbon
+            ? $this->currentDate->copy()
+            : Carbon::parse((string) $this->currentDate);
+
+        $startOfMonth = $currentDate->copy()->startOfMonth();
+        $daysCount = $currentDate->daysInMonth;
+
+        $this->daysInMonth = collect(range(1, $daysCount))
+            ->map(fn ($day) => $startOfMonth->copy()->day($day))
+            ->toArray();
+    }
+
+    private function syncActiveDateContext(Carbon|string $date, ?bool $followOperationalToday = null): void
+    {
+        $resolvedDate = $date instanceof Carbon
+            ? $date->copy()->startOfDay()
+            : Carbon::parse((string) $date)->startOfDay();
+
+        $this->date = $resolvedDate;
+        $this->currentDate = $resolvedDate->copy();
+
+        if ($followOperationalToday === null) {
+            $followOperationalToday = $resolvedDate->isSameDay(HotelTime::currentOperationalDate());
+        }
+
+        $this->followOperationalToday = $followOperationalToday;
+        $this->rebuildDaysInMonth();
+    }
+
     /**
      * Regla global: en Room Manager no se permite editar información histórica.
      */
@@ -670,8 +702,7 @@ class RoomManager extends Component
 
     public function mount($date = null, $search = null, $status = null)
     {
-        $this->currentDate = $date ? Carbon::parse($date) : HotelTime::currentOperationalDate();
-        $this->date = $this->currentDate;
+        $this->syncActiveDateContext($date ? Carbon::parse($date) : HotelTime::currentOperationalDate());
         $this->search = $search ?? '';
         $this->statusFilter = in_array((string) $status, self::ALLOWED_STATUS_FILTERS, true) ? $status : null;
         
@@ -1409,7 +1440,15 @@ class RoomManager extends Component
         if ($this->isReleasingRoom) {
             return; // NO refrescar mientras se libera una habitación
         }
-        // Livewire automatically re-renders, no need to manually load
+        if (!$this->followOperationalToday) {
+            return;
+        }
+
+        $operationalToday = HotelTime::currentOperationalDate()->startOfDay();
+        if (!$this->getSelectedDate()->startOfDay()->isSameDay($operationalToday)) {
+            $this->syncActiveDateContext($operationalToday, true);
+            $this->dispatch('room-view-changed', date: $operationalToday->toDateString());
+        }
     }
 
     /**
@@ -2356,8 +2395,7 @@ class RoomManager extends Component
      */
     public function goToDate($date)
     {
-        $this->date = Carbon::parse($date);
-        $this->currentDate = $this->date;
+        $this->syncActiveDateContext($date);
 
         // CRITICAL: Forzar actualización inmediata
         $this->loadRooms();
@@ -2366,8 +2404,7 @@ class RoomManager extends Component
 
     public function nextDay()
     {
-        $this->date = $this->date->copy()->addDay();
-        $this->currentDate = $this->date;
+        $this->syncActiveDateContext($this->getSelectedDate()->copy()->addDay());
 
         // ðŸ”¥ GENERAR NOCHE PARA FECHA ACTUAL si hay stay activa
         // ðŸ” PROTECCIÓN: Solo generar noches para HOY, nunca para fechas futuras
@@ -2434,8 +2471,7 @@ class RoomManager extends Component
 
     public function previousDay()
     {
-        $this->date = $this->date->copy()->subDay();
-        $this->currentDate = $this->date;
+        $this->syncActiveDateContext($this->getSelectedDate()->copy()->subDay(), false);
 
         // CRITICAL: Forzar actualización inmediata
         $this->loadRooms();
@@ -2449,14 +2485,7 @@ class RoomManager extends Component
      */
     public function changeDate($newDate)
     {
-        $this->date = Carbon::parse($newDate);
-        $this->currentDate = $this->date;
-
-        $startOfMonth = $this->currentDate->copy()->startOfMonth();
-        $daysCount = $this->currentDate->daysInMonth;
-        $this->daysInMonth = collect(range(1, $daysCount))
-            ->map(fn($day) => $startOfMonth->copy()->day($day))
-            ->toArray();
+        $this->syncActiveDateContext($newDate);
 
         // CRITICAL: Forzar actualización inmediata
         $this->loadRooms();
@@ -2465,8 +2494,7 @@ class RoomManager extends Component
 
     public function goToToday()
     {
-        $this->date = HotelTime::currentOperationalDate();
-        $this->currentDate = $this->date;
+        $this->syncActiveDateContext(HotelTime::currentOperationalDate(), true);
         
         // CRITICAL: Forzar actualización inmediata
         $this->loadRooms();
