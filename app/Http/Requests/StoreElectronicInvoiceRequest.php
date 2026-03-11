@@ -23,6 +23,7 @@ class StoreElectronicInvoiceRequest extends FormRequest
             'payment_method_code' => ['nullable', 'exists:dian_payment_methods,code'],
             'payment_form_code' => ['nullable', 'exists:dian_payment_forms,code'],
             'reference_code' => ['nullable', 'string', 'max:255'],
+            'notes' => ['nullable', 'string', 'max:250'],
             'items' => ['required', 'array', 'min:1'],
             'items.*.service_id' => ['required', 'exists:services,id'],
             'items.*.quantity' => ['required', 'numeric', 'min:0.001'],
@@ -42,6 +43,7 @@ class StoreElectronicInvoiceRequest extends FormRequest
             'operation_type_id.exists' => 'El tipo de operación seleccionado no es válido.',
             'payment_method_code.exists' => 'El método de pago seleccionado no es válido.',
             'payment_form_code.exists' => 'La forma de pago seleccionada no es válida.',
+            'notes.max' => 'Las observaciones no pueden exceder 250 caracteres.',
             'items.required' => 'Debe agregar al menos un servicio a la factura.',
             'items.min' => 'Debe agregar al menos un servicio a la factura.',
             'items.*.service_id.required' => 'Cada item debe tener un servicio asociado.',
@@ -96,4 +98,3 @@ class StoreElectronicInvoiceRequest extends FormRequest
         });
     }
 }
-

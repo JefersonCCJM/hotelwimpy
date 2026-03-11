@@ -241,6 +241,7 @@ class CreateElectronicInvoiceModal extends Component
         'formData.payment_method_id' => 'required|exists:dian_payment_methods,id',
         'formData.payment_form_id' => 'required|exists:dian_payment_forms,id',
         'formData.numbering_range_id' => 'required|exists:factus_numbering_ranges,id',
+        'formData.notes' => 'nullable|string|max:250',
         'items' => 'required|array|min:1',
         'items.*.name' => 'required|string|max:255|min:1',
         'items.*.quantity' => 'required|numeric|min:0.001',

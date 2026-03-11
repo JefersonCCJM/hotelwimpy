@@ -518,6 +518,21 @@ window.invoiceForm = function() {
             </div>
         </div>
 
+        <div class="bg-white rounded-xl border border-gray-100 p-4 sm:p-6">
+            <div>
+                <label for="notes" class="block text-xs sm:text-sm font-semibold text-gray-700 mb-2">
+                    Observaciones
+                </label>
+                <textarea id="notes" name="notes" rows="3" maxlength="250"
+                          class="block w-full px-3 py-2.5 border border-gray-300 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500 @error('notes') border-red-300 @enderror"
+                          placeholder="Observaciones que deben enviarse a Factus...">{{ old('notes') }}</textarea>
+                <p class="mt-1.5 text-xs text-gray-500">Maximo 250 caracteres.</p>
+                @error('notes')
+                    <p class="mt-1.5 text-xs text-red-600">{{ $message }}</p>
+                @enderror
+            </div>
+        </div>
+
         <!-- Servicios -->
         <div class="bg-white rounded-xl border border-gray-100 p-4 sm:p-6">
             <div class="flex items-center justify-between mb-4">
@@ -747,5 +762,3 @@ window.invoiceForm = function() {
 @push('scripts')
 <script src="https://cdn.jsdelivr.net/npm/tom-select@2.3.1/dist/js/tom-select.complete.min.js"></script>
 @endpush
-
-

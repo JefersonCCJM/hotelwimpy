@@ -44,6 +44,7 @@ class ElectronicInvoiceService
         DB::beginTransaction();
         
         try {
+            $notes = $this->normalizeInvoiceNotes($data['notes'] ?? null);
             $customer = Customer::with('taxProfile')->findOrFail($data['customer_id']);
             
             // Agregar logs detallados para depurar el perfil fiscal
@@ -132,6 +133,7 @@ class ElectronicInvoiceService
                 'payment_form_code' => $data['payment_form_code'],
                 'reference_code' => $data['reference_code'] ?? $this->generateReferenceCode(),
                 'document' => $this->generateDocumentNumber($numberingRange),
+                'notes' => $notes,
                 'status' => 'pending',
                 'gross_value' => $data['totals']['subtotal'],
                 'tax_amount' => $data['totals']['tax'],
@@ -528,7 +530,6 @@ class ElectronicInvoiceService
             'document' => $invoice->documentType->code,
             'numbering_range_id' => $invoice->factus_numbering_range_id,
             'reference_code' => $invoice->reference_code,
-            'observation' => $invoice->notes ?? '',
             'payment_method_code' => (int) $invoice->payment_method_code,
             'payment_form_code' => (int) $invoice->payment_form_code,
             'operation_type' => $invoice->operationType->code,
@@ -536,6 +537,11 @@ class ElectronicInvoiceService
             'customer' => $customerData,
             'items' => $items,
         ];
+
+        $observation = $this->normalizeInvoiceNotes($invoice->notes);
+        if ($observation !== null) {
+            $payload['observation'] = $observation;
+        }
 
         // Agregar related_documents solo si el document_type lo requiere (ej. nota crédito)
         if ($invoice->documentType->code !== '01') {
@@ -587,6 +593,13 @@ class ElectronicInvoiceService
     private function generateReferenceCode(): string
     {
         return 'INV-' . date('Ymd') . '-' . strtoupper(uniqid());
+    }
+
+    private function normalizeInvoiceNotes(null|string $notes): ?string
+    {
+        $normalized = trim((string) ($notes ?? ''));
+
+        return $normalized !== '' ? $normalized : null;
     }
 
     /**

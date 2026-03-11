@@ -10,7 +10,7 @@ class ElectronicInvoice extends Model
         'customer_id', 'factus_numbering_range_id',
         'document_type_id', 'operation_type_id',
         'payment_method_code', 'payment_form_code',
-        'reference_code', 'document', 'status',
+        'reference_code', 'document', 'notes', 'status',
         'cufe', 'qr',
         'total', 'tax_amount', 'gross_value', 
         'discount_amount', 'surcharge_amount',

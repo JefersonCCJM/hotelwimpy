@@ -4,6 +4,7 @@
 @section('header', 'Factura Electrónica')
 
 @section('content')
+@php($invoiceObservation = $electronicInvoice->notes ?: data_get($electronicInvoice->payload_sent, 'observation'))
 <div class="space-y-4 sm:space-y-6">
     @if(session('success'))
         <div class="bg-emerald-50 border-l-4 border-emerald-500 p-4 rounded-lg">
@@ -216,6 +217,17 @@
                             {{ $electronicInvoice->operationType->name }} ({{ $electronicInvoice->operationType->code }})
                         </div>
                     </div>
+
+                    @if($invoiceObservation)
+                    <div class="sm:col-span-2">
+                        <label class="block text-xs font-semibold text-gray-500 uppercase tracking-wider mb-1.5">
+                            Observaciones
+                        </label>
+                        <div class="text-sm text-gray-900 whitespace-pre-line">
+                            {{ $invoiceObservation }}
+                        </div>
+                    </div>
+                    @endif
                 </div>
             </div>
 
@@ -484,4 +496,3 @@
     </div>
 </div>
 @endsection
-
