@@ -4,6 +4,7 @@ namespace Tests\Feature\Livewire;
 
 use App\Enums\RoomDisplayStatus;
 use App\Livewire\RoomManager;
+use App\Livewire\RoomManager\RoomRow;
 use App\Models\Room;
 use App\Services\RoomAvailabilityService;
 use App\Support\HotelTime;
@@ -11,6 +12,7 @@ use Carbon\Carbon;
 use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\Facades\DB;
+use Livewire\Livewire;
 use PHPUnit\Framework\Attributes\Test;
 use Tests\TestCase;
 
@@ -234,6 +236,25 @@ class RoomManagerOperationalStatusTest extends TestCase
 
         $this->assertSame('limpia', $room->fresh()->cleaningStatus($operationalDate)['code']);
         $this->assertSame('limpia', $room->fresh()->cleaningStatus($operationalDate->copy()->addDay())['code']);
+    }
+
+    #[Test]
+    public function room_row_updates_cleaning_status_without_requiring_full_grid_refresh(): void
+    {
+        Carbon::setTestNow(Carbon::parse('2026-03-07 10:00:00', 'America/Bogota'));
+
+        $operationalDate = HotelTime::currentOperationalDate();
+        $room = $this->createRoom('401A');
+
+        Livewire::test(RoomRow::class, [
+            'room' => $room->fresh(),
+            'currentDate' => $operationalDate->copy(),
+            'hasVisibilityFilters' => false,
+        ])
+            ->call('updateCleaningStatus', 'pendiente')
+            ->assertDispatched('notify');
+
+        $this->assertSame('pendiente', $room->fresh()->cleaningStatus($operationalDate)['code']);
     }
 
     #[Test]

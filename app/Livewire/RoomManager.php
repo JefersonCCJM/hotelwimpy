@@ -22,6 +22,7 @@ use App\Enums\ShiftHandoverStatus;
 use App\Services\AuditService;
 use App\Services\RoomOperationalStatusService;
 use App\Services\ReservationCancellationService;
+use App\Services\RoomManagerGridHydrationService;
 use App\Services\ReservationRoomPricingService;
 use App\Models\StayNight;
 use App\Enums\RoomDisplayStatus;
@@ -53,6 +54,8 @@ class RoomManager extends Component
     public $statusFilter = null;
     public $cleaningStatusFilter = null;
     public $ventilationTypeFilter = null;
+    public int $roomsGridVersion = 0;
+    public array $roomRowVersions = [];
 
     // Modales
     public bool $quickRentModal = false;
@@ -1438,9 +1441,11 @@ class RoomManager extends Component
     public function refreshRoomsPolling()
     {
         if ($this->isReleasingRoom) {
+            $this->skipRender();
             return; // NO refrescar mientras se libera una habitación
         }
         if (!$this->followOperationalToday) {
+            $this->skipRender();
             return;
         }
 
@@ -1448,15 +1453,91 @@ class RoomManager extends Component
         if (!$this->getSelectedDate()->startOfDay()->isSameDay($operationalToday)) {
             $this->syncActiveDateContext($operationalToday, true);
             $this->dispatch('room-view-changed', date: $operationalToday->toDateString());
+            return;
         }
+
+        $this->roomsGridVersion++;
     }
 
     /**
      * Forzar recarga de habitaciones desde BD tras eventos.
      */
-    public function loadRooms()
+    public function loadRooms(bool $resetPage = true)
     {
-        $this->resetPage();
+        if ($resetPage) {
+            $this->resetPage();
+        }
+
+        $this->roomsGridVersion++;
+    }
+
+    private function touchRoomRows(array $roomIds, bool $affectsVisibility = false, bool $dispatchRefresh = true): void
+    {
+        $normalizedRoomIds = collect($roomIds)
+            ->filter(static fn ($roomId) => !empty($roomId))
+            ->map(static fn ($roomId) => (int) $roomId)
+            ->unique()
+            ->values();
+
+        if ($normalizedRoomIds->isEmpty()) {
+            return;
+        }
+
+        if ($affectsVisibility && $this->hasRoomVisibilityFilters()) {
+            $this->loadRooms(false);
+            return;
+        }
+
+        foreach ($normalizedRoomIds as $roomId) {
+            $this->roomRowVersions[$roomId] = (int) ($this->roomRowVersions[$roomId] ?? 0) + 1;
+            if ($dispatchRefresh) {
+                $this->dispatch('refresh-room-row', roomId: $roomId);
+            }
+        }
+    }
+
+    private function touchReservationRoomRows(int|Reservation $reservation, bool $affectsVisibility = false): void
+    {
+        $roomIds = $reservation instanceof Reservation
+            ? ($reservation->relationLoaded('reservationRooms')
+                ? $reservation->reservationRooms->pluck('room_id')->all()
+                : $reservation->reservationRooms()->pluck('room_id')->all())
+            : ReservationRoom::query()
+                ->where('reservation_id', (int) $reservation)
+                ->pluck('room_id')
+                ->all();
+
+        $this->touchRoomRows($roomIds, $affectsVisibility);
+    }
+
+    private function hasRoomVisibilityFilters(): bool
+    {
+        return !empty($this->statusFilter) || !empty($this->cleaningStatusFilter);
+    }
+
+    private function canSkipFullRoomGridRender(bool $affectsVisibility = false): bool
+    {
+        if ($this->activeTab !== 'rooms') {
+            return false;
+        }
+
+        if ($affectsVisibility && $this->hasRoomVisibilityFilters()) {
+            return false;
+        }
+
+        return !$this->roomDetailModal
+            && !$this->roomEditModal
+            && !$this->createRoomModal
+            && !$this->releaseHistoryDetailModal
+            && !$this->roomReleaseConfirmationModal
+            && !$this->guestsModal
+            && !$this->assignGuestsModal
+            && !$this->roomDailyHistoryModal
+            && !$this->editPricesModal
+            && !$this->allGuestsModal
+            && !$this->changeRoomModal
+            && !$this->quickRentModal
+            && !$this->quickReservationModal;
     }
 
     /**
@@ -2056,7 +2137,8 @@ class RoomManager extends Component
 
             $this->closeQuickReservation();
             $this->dispatch('notify', type: 'success', message: 'Reserva creada exitosamente (Cód: ' . $reservation->reservation_code . ').');
-            $this->dispatch('refreshRooms');
+            $this->touchRoomRows([(int) $form['room_id']], true);
+            $this->dispatch('room-quick-reserve-marked', roomId: (int) $form['room_id']);
         } catch (\Throwable $e) {
             \Log::error('Error creating quick reservation', [
                 'room_id' => $form['room_id'] ?? null,
@@ -2122,7 +2204,8 @@ class RoomManager extends Component
             }
 
             $this->dispatch('room-quick-reserve-cleared', roomId: (int) $room->id);
-            $this->dispatch('refreshRooms');
+            $this->touchRoomRows([(int) $room->id], true);
+            $this->skipRender();
         } catch (\Exception $e) {
             \Log::error('Error canceling quick room reservation', [
                 'room_id' => $roomId,
@@ -2280,7 +2363,10 @@ class RoomManager extends Component
                 $continuedUntil = $newCheckOutDate->copy();
             });
 
-            $this->loadRooms();
+            $this->touchRoomRows([(int) $roomId], true);
+            if ($this->canSkipFullRoomGridRender(true)) {
+                $this->skipRender();
+            }
 
             \Log::info('Continue stay executed', [
                 'room_id' => $roomId,
@@ -2349,7 +2435,7 @@ class RoomManager extends Component
             $room->save();
 
             $this->dispatch('notify', type: 'success', message: 'Habitación marcada como limpia.');
-            $this->dispatch('refreshRooms');
+            $this->touchRoomRows([(int) $room->id], true, false);
             
             // Notificar al frontend sobre el cambio de estado
             $this->dispatch('room-marked-clean', roomId: $room->id);
@@ -2979,6 +3065,7 @@ class RoomManager extends Component
             $this->newSale = null;
             $this->showAddSale = false;
             $this->openRoomDetail($roomId);
+            $this->touchReservationRoomRows((int) $reservationId);
             $this->dispatch('notify', type: 'success', message: "Consumo registrado: {$product->name} x{$quantity}");
 
         } catch (\Exception $e) {
@@ -3056,6 +3143,7 @@ class RoomManager extends Component
                 $this->openRoomDetail($this->detailData['room']['id']);
             }
 
+            $this->touchReservationRoomRows((int) $sale->reservation_id);
             $message = $isPaid ? 'Pago de consumo registrado.' : 'Pago de consumo anulado.';
             $this->dispatch('notify', type: 'success', message: $message);
 
@@ -3122,6 +3210,7 @@ class RoomManager extends Component
                 $this->openRoomDetail($this->detailData['room']['id']);
             }
 
+            $this->touchReservationRoomRows((int) $reservationId);
             $this->dispatch('notify', type: 'success', message: 'Abono eliminado correctamente.');
 
         } catch (\Exception $e) {
@@ -3183,6 +3272,7 @@ class RoomManager extends Component
                 $this->openRoomDetail($this->detailData['room']['id']);
             }
 
+            $this->touchReservationRoomRows((int) $reservationId);
             $this->dispatch('notify', type: 'success', message: 'Abono actualizado correctamente.');
 
         } catch (\Exception $e) {
@@ -3564,9 +3654,8 @@ class RoomManager extends Component
             });
 
             $this->cancelChangeRoom();
-            $this->loadRooms();
+            $this->touchRoomRows([(int) $currentRoomId, (int) $newRoomId], true);
             $this->dispatch('$refresh');
-            $this->dispatch('refreshRooms');
             $this->dispatch('notify', type: 'success', message: $changeMode === 'active_stay'
                 ? 'Habitacion cambiada correctamente. La nueva habitacion queda ocupada.'
                 : 'Habitacion cambiada correctamente. La reserva sigue pendiente de check-in.');
@@ -4070,7 +4159,7 @@ class RoomManager extends Component
                 $this->openRoomDetail((int) $this->detailData['room']['id']);
             }
 
-            $this->loadRooms();
+            $this->touchReservationRoomRows($reservation);
             $this->dispatch('notify', type: 'success', message: 'Precios actualizados correctamente.');
         } catch (\Exception $e) {
             DB::rollBack();
@@ -4405,9 +4494,8 @@ class RoomManager extends Component
 
             // Refrescar la relación de pagos de la reserva para que se actualice en el modal
             $reservation->refresh();
-            $reservation->load('payments');
-            
-            $this->dispatch('refreshRooms');
+            $reservation->load(['payments', 'reservationRooms']);
+            $this->touchReservationRoomRows($reservation);
             
             // Cerrar el modal de pago si está abierto
             $this->dispatch('close-payment-modal');
@@ -4421,6 +4509,10 @@ class RoomManager extends Component
                     // Forzar recarga del modal con los nuevos datos de pago
                     $this->openRoomDetail($reservationRoom->room_id);
                 }
+            }
+
+            if (!$this->roomDetailModal && $this->canSkipFullRoomGridRender()) {
+                $this->skipRender();
             }
 
             return true;
@@ -5147,7 +5239,7 @@ class RoomManager extends Component
             $this->dispatch('notify', type: 'success', message: "Devolución de \${$formattedAmount} registrada correctamente.");
 
             // Emitir eventos para refrescar UI y cerrar modal
-            $this->dispatch('refreshRooms');
+            $this->touchReservationRoomRows($reservation);
             $this->dispatch('close-room-release-modal');
 
             return true;
@@ -5309,9 +5401,10 @@ class RoomManager extends Component
                 message: $createdAnyStay ? 'Check-in registrado correctamente.' : 'La reserva ya tenia check-in registrado.'
             );
 
-            $this->resetPage();
-            $this->dispatch('$refresh');
-            $this->dispatch('refreshRooms');
+            $this->touchRoomRows($roomIds->all(), true);
+            if ($this->canSkipFullRoomGridRender(true)) {
+                $this->skipRender();
+            }
             $this->dispatch('room-rented', roomId: (int) $roomId);
             $this->dispatch('room-view-changed', date: $selectedDate->toDateString());
         } catch (\Throwable $e) {
@@ -5866,8 +5959,7 @@ class RoomManager extends Component
             
             // CRITICAL: Forzar actualización inmediata de habitaciones para mostrar info de huésped y cuenta
             // Resetear paginación y forzar re-render completo
-            $this->resetPage();
-            $this->dispatch('$refresh');
+            $this->touchRoomRows([(int) $validated['room_id']], true);
             // Disparar evento para resetear Alpine.js y forzar re-render de componentes
             $this->dispatch('room-view-changed', date: $this->date->toDateString());
             $this->dispatch('room-rented', roomId: (int) $validated['room_id']);
@@ -6956,7 +7048,8 @@ class RoomManager extends Component
 
                 $operationalStatusService->markMaintenance($room, $selectedDate, Auth::id());
                 $this->dispatch('notify', type: 'success', message: 'Habitacion marcada en mantenimiento para el dia operativo y el siguiente.');
-                $this->loadRooms();
+                $this->touchRoomRows([(int) $room->id], true);
+                $this->skipRender();
                 return;
             }
 
@@ -6977,7 +7070,8 @@ class RoomManager extends Component
             }
             
             // Refrescar habitaciones para actualizar la vista
-            $this->loadRooms();
+            $this->touchRoomRows([(int) $room->id], true);
+            $this->skipRender();
         } catch (\Exception $e) {
             $this->dispatch('notify', type: 'error', message: 'Error al actualizar estado de limpieza: ' . $e->getMessage());
             \Log::error('Error updating cleaning status', [
@@ -7028,7 +7122,8 @@ class RoomManager extends Component
                 : 'Observacion diaria eliminada.'
         );
 
-        $this->loadRooms();
+        $this->touchRoomRows([(int) $roomId]);
+        $this->skipRender();
     }
 
     public function confirmReleaseRoom($roomId)
@@ -7584,7 +7679,7 @@ class RoomManager extends Component
             }
             $this->isReleasingRoom = false;
             $this->closeRoomReleaseConfirmation();
-            $this->dispatch('refreshRooms');
+            $this->touchRoomRows([(int) $roomId], true);
         } catch (\Exception $e) {
             if ($started) {
                 $this->dispatch('room-release-finished', roomId: $roomId);
@@ -7681,20 +7776,15 @@ class RoomManager extends Component
 
         $rooms = $this->getRoomsQuery()->paginate(30);
         $selectedDate = $this->getSelectedDate()->startOfDay();
-        $quickReservedRoomMap = $this->getQuickReservedRoomMap(
-            $selectedDate,
-            $rooms->getCollection()->pluck('id')
-        );
-        $nightStatusByReservationRoom = StayNight::query()
-            ->whereDate('date', $selectedDate->toDateString())
-            ->whereIn('room_id', $rooms->getCollection()->pluck('id'))
-            ->get(['reservation_id', 'room_id', 'is_paid'])
-            ->keyBy(static function (StayNight $night): string {
-                return ((int) $night->reservation_id) . '-' . ((int) $night->room_id);
-            });
+        $gridHydrationService = app(RoomManagerGridHydrationService::class);
         $dailyStats = $this->getDailyOverviewStats();
         $receptionReservationsSummary = $this->getReceptionReservationsSummary();
 
+        $rooms->setCollection(
+            $gridHydrationService->hydrateRooms($rooms->getCollection(), $selectedDate)
+        );
+
+        if (false) {
         // Enriquecer rooms con estados y deudas
         $rooms->getCollection()->transform(function($room) use ($selectedDate, $quickReservedRoomMap, $nightStatusByReservationRoom) {
             $operationalStatus = $room->getOperationalStatus($selectedDate);
@@ -7858,6 +7948,7 @@ class RoomManager extends Component
             
             return $room;
         });
+        }
 
         // Aplicar filtros de estado operativo y limpieza (independientes)
         if ($this->statusFilter || $this->cleaningStatusFilter) {

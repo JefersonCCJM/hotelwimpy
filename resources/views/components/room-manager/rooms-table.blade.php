@@ -1,4 +1,4 @@
-﻿@props(['rooms', 'currentDate'])
+@props(['rooms', 'currentDate', 'roomRowVersions' => [], 'roomsGridVersion' => 0, 'hasVisibilityFilters' => false])
 
 <div class="bg-white rounded-xl border border-gray-100 overflow-hidden">
     <div class="overflow-x-auto">
@@ -15,9 +15,13 @@
                     <th class="px-6 py-4 text-right text-xs font-semibold text-gray-500 uppercase tracking-wider">Acciones</th>
                 </tr>
             </thead>
-            <tbody class="divide-y divide-gray-200" style="position: static;">
-                @forelse($rooms as $room)
-                    <x-room-manager.room-row :room="$room" :currentDate="$currentDate" wire:key="room-row-{{ $room->id }}-{{ $currentDate instanceof \Carbon\Carbon ? $currentDate->format('Y-m-d') : \Carbon\Carbon::parse($currentDate)->format('Y-m-d') }}" />
+                <tbody class="divide-y divide-gray-200" style="position: static;">
+                    @forelse($rooms as $room)
+                    <livewire:room-manager.room-row
+                        :room="$room"
+                        :current-date="$currentDate"
+                        :has-visibility-filters="$hasVisibilityFilters"
+                        :wire:key="'room-row-' . $room->id . '-' . ($currentDate instanceof \Carbon\Carbon ? $currentDate->format('Y-m-d') : \Carbon\Carbon::parse($currentDate)->format('Y-m-d')) . '-' . (int) $roomsGridVersion . '-' . (int) ($roomRowVersions[$room->id] ?? 0)" />
                 @empty
                     <tr>
                         <td colspan="8" class="px-6 py-12 text-center">

@@ -22,21 +22,11 @@
     // SINGLE SOURCE OF TRUTH: Obtener stay UNA SOLA VEZ para la fecha seleccionada
     // CRITICAL: Solo usar stay para mostrar info de huesped/cuenta cuando operationalStatus es 'occupied' o 'pending_checkout'
     // Si operationalStatus es 'pending_cleaning' o 'free_clean', NO hay stay activa para mostrar
-    $stay = null;
-    if (in_array($operationalStatus, ['occupied', 'pending_checkout'])) {
-        $stay = $room->getAvailabilityService()->getStayForDate($selectedDate);
-        
-        // Eager loading de relaciones necesarias para evitar N+1 queries
-        if ($stay) {
-            $stay->loadMissing([
-                'reservation.customer',
-                'reservation.reservationRooms' => function ($query) use ($room) {
-                    $query->where('room_id', $room->id);
-                }
-            ]);
-        }
-    }
+    $stay = in_array($operationalStatus, ['occupied', 'pending_checkout'])
+        ? ($room->current_stay ?? null)
+        : null;
 
+    $cleaningCode = data_get($room->cleaningStatus($selectedDate), 'code', 'limpia');
     $isQuickReserved = (bool) ($room->is_quick_reserved ?? false);
     $pendingCheckinReservation = $room->pending_checkin_reservation ?? $room->future_reservation ?? null;
     $pendingCheckinReservationCode = strtoupper(trim((string) ($pendingCheckinReservation->reservation_code ?? '')));
@@ -45,6 +35,13 @@
     $reservationBadge = !$hasStayInfo && $isPendingReservation ? $pendingCheckinReservation : null;
     $reservationBadgeCode = strtoupper(trim((string) ($reservationBadge->reservation_code ?? '')));
     $hasReservationBadge = str_starts_with($reservationBadgeCode, 'RES-');
+    $rowStateKey = implode('-', [
+        (string) $rowOperationalStatus,
+        (string) $cleaningCode,
+        $isQuickReserved ? '1' : '0',
+        $hasStayInfo ? (string) ($stay->id ?? 0) : '0',
+        $hasReservationBadge ? md5($reservationBadgeCode) : 'none',
+    ]);
 @endphp
 
 <tr
@@ -149,13 +146,13 @@
         'bg-yellow-50/30': displayState === 'pending_cleaning',
         'bg-emerald-50/30': displayState === 'free_clean'
     }"
-    wire:key="room-{{ $room->id }}" style="position: static;">
+    wire:key="room-{{ $room->id }}-{{ $rowStateKey }}" style="position: static;">
     <td class="px-6 py-4 whitespace-nowrap align-top">
         <div class="flex items-center">
             <div class="h-10 w-10 rounded-lg bg-gray-100 flex items-center justify-center mr-3 text-gray-400 group-hover:bg-blue-50 group-hover:text-blue-600 transition-colors">
                 <i class="fas fa-door-closed"></i>
             </div>
-            <div wire:click="openRoomDetail({{ $room->id }})" class="cursor-pointer">
+            <div wire:click="$parent.openRoomDetail({{ $room->id }})" class="cursor-pointer">
                 <div class="text-sm font-semibold text-gray-900">Hab. {{ $room->room_number }}</div>
                 <div class="text-xs text-gray-500">
                     {{ $room->beds_count }} {{ $room->beds_count == 1 ? 'Cama' : 'Camas' }} | Cap. {{ $room->max_capacity }}

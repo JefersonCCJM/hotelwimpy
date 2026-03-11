@@ -213,6 +213,9 @@
         <x-room-manager.rooms-table 
             :rooms="$rooms" 
             :currentDate="$currentDate" 
+            :roomRowVersions="$roomRowVersions"
+            :roomsGridVersion="$roomsGridVersion"
+            :hasVisibilityFilters="!empty($statusFilter) || !empty($cleaningStatusFilter)"
         />
     @elseif($activeTab === 'history')
         <!-- HISTORIAL DE LIBERACIONES -->

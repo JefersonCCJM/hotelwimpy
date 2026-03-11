@@ -142,7 +142,7 @@
         {{-- Boton Editar Precios --}}
         @if(!$isPastDate)
             <button type="button"
-                    wire:click="openEditPrices({{ $reservation->id }})"
+                    wire:click="$parent.openEditPrices({{ $reservation->id }})"
                     class="mt-2 text-xs text-blue-600 hover:text-blue-800 underline font-medium flex items-center space-x-1">
                 <i class="fas fa-edit"></i>
                 <span>Editar precios</span>
@@ -159,7 +159,7 @@
             No hay reserva ligada a esta estadia.
         </div>
         <button type="button"
-                wire:click="openRoomDetail({{ $room->id }})"
+                wire:click="$parent.openRoomDetail({{ $room->id }})"
                 class="text-xs text-blue-600 hover:text-blue-800 underline font-medium mt-1">
             Ver detalles
         </button>
