@@ -83,7 +83,7 @@
             : null;
         $isCancelled = method_exists($reservation, 'trashed') && $reservation->trashed();
         $hasOperationalStay = false;
-        $operationalStayStatuses = ['active', 'pending_checkout', 'finished'];
+        $operationalStayStatuses = ['active', 'pending_checkout'];
 
         if (method_exists($reservation, 'relationLoaded') && $reservation->relationLoaded('stays')) {
             $hasOperationalStay = $reservation->stays->contains(
@@ -171,7 +171,7 @@
                 && !empty($checkInDateRaw)
                 && \Carbon\Carbon::parse($checkInDateRaw)->startOfDay()->lt($today)
                 && $canDoCancel,
-            'can_checkin' => !$isCancelled && $canDoCheckIn,
+            'can_checkin' => !$isCancelled && $canDoCheckIn && !$hasOperationalStay,
             'can_pay' => false,
             'can_cancel_payment' => !$isCancelled && $canDoPayments && !empty($latestPositivePayment),
             'last_payment_amount' => $latestPositivePayment ? (float) ($latestPositivePayment->amount ?? 0) : 0.0,

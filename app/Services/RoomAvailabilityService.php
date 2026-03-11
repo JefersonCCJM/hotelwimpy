@@ -3,6 +3,8 @@
 namespace App\Services;
 
 use App\Models\Room;
+use App\Models\RoomMaintenanceBlock;
+use App\Models\RoomOperationalStatus;
 use App\Models\Stay;
 use App\Models\ReservationRoom;
 use App\Enums\RoomDisplayStatus;
@@ -69,8 +71,10 @@ class RoomAvailabilityService
     public function getStayForDate(?Carbon $date = null): ?\App\Models\Stay
     {
         $date = $date ?? HotelTime::currentOperationalDate();
-        $startOfDay = $date->copy()->startOfDay();
-        $endOfDay = $date->copy()->endOfDay();
+        $operationalDate = $date->copy()->startOfDay();
+        $operationalStart = HotelTime::startOfOperationalDay($operationalDate);
+        $operationalEnd = HotelTime::endOfOperationalDay($operationalDate);
+        $calendarEndOfDay = $operationalDate->copy()->endOfDay();
 
         // CRITICAL: Usar nueva query directamente, NO la relación en memoria
         // Esto evita problemas de caché cuando se crea una nueva stay
@@ -82,38 +86,38 @@ class RoomAvailabilityService
                     $query->where('room_id', $this->room->id);
                 }
             ])
-            ->where('check_in_at', '<=', $endOfDay);
+            ->where('check_in_at', '<=', $operationalEnd);
 
         // CRÍTICO: Debe haber un check_out que sea >= startOfDay
         // Si check_out_at IS NULL, usamos la fecha de checkout de reservation_rooms
         // IMPORTANTE: Para fechas futuras, solo retornar stay si la fecha está ANTES del checkout
-        $isFutureDate = $date->isFuture();
+        $isFutureDate = HotelTime::isOperationalFutureDate($operationalDate);
         
-        $stayQuery->where(function ($query) use ($startOfDay, $endOfDay, $isFutureDate) {
-            $query->where(function ($q) use ($startOfDay) {
+        $stayQuery->where(function ($query) use ($operationalStart, $calendarEndOfDay, $isFutureDate) {
+            $query->where(function ($q) use ($operationalStart) {
                 // Caso 1: check_out_at IS NOT NULL y es >= startOfDay
                 // Esto significa que el checkout ocurrió en o después de esta fecha
                 $q->whereNotNull('check_out_at')
-                  ->where('check_out_at', '>=', $startOfDay);
+                  ->where('check_out_at', '>=', $operationalStart);
             })
-            ->orWhere(function ($q) use ($startOfDay, $endOfDay, $isFutureDate) {
+            ->orWhere(function ($q) use ($operationalStart, $calendarEndOfDay, $isFutureDate) {
                 // Caso 2: check_out_at IS NULL, pero reservation_rooms.check_out_date debe ser >= startOfDay
                 $q->whereNull('check_out_at')
-                  ->whereHas('reservation', function ($r) use ($startOfDay, $endOfDay, $isFutureDate) {
-                      $r->whereHas('reservationRooms', function ($rr) use ($startOfDay, $endOfDay, $isFutureDate) {
-                          $rr->where('room_id', $this->room->id)
-                             ->where('check_out_date', '>=', $startOfDay->toDateString());
-                          
-                          // CRITICAL: Para fechas futuras, solo retornar si la fecha consultada está DENTRO del rango
-                          // Regla: check_out_date >= endOfDay (la fecha consultada es <= día del checkout)
-                          // Esto asegura que:
-                          // - Si la fecha consultada es ANTES del checkout: check_out_date > endOfDay → retorna stay
-                          // - Si la fecha consultada ES el día del checkout: check_out_date = endOfDay → retorna stay
-                          // - Si la fecha consultada es DESPUÉS del checkout: check_out_date < endOfDay → NO retorna stay
-                          if ($isFutureDate) {
-                              $rr->where('check_out_date', '>=', $endOfDay->toDateString());
-                          }
-                      });
+                  ->whereHas('reservation', function ($r) use ($operationalStart, $calendarEndOfDay, $isFutureDate) {
+                      $r->whereHas('reservationRooms', function ($rr) use ($operationalStart, $calendarEndOfDay, $isFutureDate) {
+                           $rr->where('room_id', $this->room->id)
+                             ->where('check_out_date', '>=', $operationalStart->toDateString());
+                           
+                           // CRITICAL: Para fechas futuras, solo retornar si la fecha consultada está DENTRO del rango
+                           // Regla: check_out_date >= endOfDay (la fecha consultada es <= día del checkout)
+                           // Esto asegura que:
+                           // - Si la fecha consultada es ANTES del checkout: check_out_date > endOfDay → retorna stay
+                           // - Si la fecha consultada ES el día del checkout: check_out_date = endOfDay → retorna stay
+                           // - Si la fecha consultada es DESPUÉS del checkout: check_out_date < endOfDay → NO retorna stay
+                           if ($isFutureDate) {
+                               $rr->where('check_out_date', '>=', $calendarEndOfDay->toDateString());
+                           }
+                       });
                   });
             });
         });
@@ -216,17 +220,18 @@ class RoomAvailabilityService
         $date = $date ?? HotelTime::currentOperationalDate();
 
         // Priority 1: Maintenance blocks everything
-        if ($this->room->isInMaintenance()) {
+        if ($this->room->isInMaintenance($date)) {
             return RoomDisplayStatus::MANTENIMIENTO;
         }
 
-        // Priority 2: Active stay = occupied
-        if ($this->isOccupiedOn($date)) {
+        $operationalStatus = $this->room->getOperationalStatus($date);
+
+        // Priority 2 and 3: Keep display state aligned with operational state.
+        if ($operationalStatus === 'occupied') {
             return RoomDisplayStatus::OCUPADA;
         }
 
-        // Priority 3: Pending checkout
-        if ($this->hasPendingCheckoutOn($date)) {
+        if ($operationalStatus === 'pending_checkout') {
             return RoomDisplayStatus::PENDIENTE_CHECKOUT;
         }
 
@@ -307,6 +312,12 @@ class RoomAvailabilityService
         ]);
 
         try {
+            $maintenanceConflict = $this->findMaintenanceConflict($roomId, $checkIn, $checkOut);
+            if ($maintenanceConflict !== null) {
+                Log::debug("❌ Habitación {$roomId} NO disponible - Mantenimiento en conflicto", $maintenanceConflict);
+                return false;
+            }
+
             // 1. Verificar stays que intersectan el rango para esta habitación
             $conflictingStay = $this->findConflictingStay($roomId, $checkIn, $checkOut, $excludeReservationId);
             if ($conflictingStay) {
@@ -498,6 +509,17 @@ class RoomAvailabilityService
         foreach ($allRooms as $room) {
             $roomId = $room->id;
 
+            $maintenanceConflict = $this->findMaintenanceConflict($roomId, $checkIn, $checkOut);
+            if ($maintenanceConflict !== null) {
+                $unavailable[] = [
+                    'roomId' => $roomId,
+                    'roomNumber' => $room->room_number,
+                    'reason' => 'maintenance_conflict',
+                    'details' => $maintenanceConflict,
+                ];
+                continue;
+            }
+
             $conflictingStay = $this->findConflictingStay($roomId, $checkIn, $checkOut, $excludeReservationId);
             if ($conflictingStay) {
                 $unavailable[] = [
@@ -536,6 +558,63 @@ class RoomAvailabilityService
     }
 
     /**
+     * Busca conflicto de mantenimiento para una habitacion en un rango operativo.
+     *
+     * @return array<string, mixed>|null
+     */
+    private function findMaintenanceConflict(int $roomId, Carbon $checkIn, Carbon $checkOut): ?array
+    {
+        $rangeStart = $checkIn->copy()->startOfDay();
+        $rangeEndExclusive = $checkOut->copy()->startOfDay();
+
+        if ($rangeEndExclusive->lte($rangeStart)) {
+            return null;
+        }
+
+        $dailyMaintenanceDate = RoomOperationalStatus::query()
+            ->where('room_id', $roomId)
+            ->where('cleaning_override_status', 'mantenimiento')
+            ->whereDate('operational_date', '>=', $rangeStart->toDateString())
+            ->whereDate('operational_date', '<', $rangeEndExclusive->toDateString())
+            ->orderBy('operational_date')
+            ->value('operational_date');
+
+        if ($dailyMaintenanceDate !== null) {
+            return [
+                'type' => 'daily_maintenance',
+                'operational_date' => Carbon::parse((string) $dailyMaintenanceDate)->toDateString(),
+            ];
+        }
+
+        $lastOperationalDate = $rangeEndExclusive->copy()->subDay()->startOfDay();
+        $operationalStart = HotelTime::startOfOperationalDay($rangeStart);
+        $operationalEnd = HotelTime::endOfOperationalDay($lastOperationalDate);
+
+        $block = RoomMaintenanceBlock::query()
+            ->where('room_id', $roomId)
+            ->whereHas('status', function ($query) {
+                $query->where('code', 'active');
+            })
+            ->where('start_at', '<=', $operationalEnd)
+            ->where(function ($query) use ($operationalStart) {
+                $query->whereNull('end_at')
+                    ->orWhere('end_at', '>=', $operationalStart);
+            })
+            ->orderBy('start_at')
+            ->first();
+
+        if ($block === null) {
+            return null;
+        }
+
+        return [
+            'type' => 'maintenance_block',
+            'start_at' => $block->start_at?->format('Y-m-d H:i:s'),
+            'end_at' => $block->end_at?->format('Y-m-d H:i:s'),
+        ];
+    }
+
+    /**
      * Busca stays en conflicto para una habitación y rango.
      * Incluye fallback a reservation_rooms.check_out_date si check_out_at es null.
      */
@@ -546,19 +625,24 @@ class RoomAvailabilityService
         ?int $excludeReservationId = null
     ): ?Stay
     {
+        $driver = DB::connection()->getDriverName();
+        $oneDayAfterCheckInSql = $driver === 'sqlite'
+            ? "datetime(check_in_at, '+1 day') > ?"
+            : 'DATE_ADD(check_in_at, INTERVAL 1 DAY) > ?';
+
         $query = Stay::query()
             ->where('room_id', $roomId)
             ->whereIn('status', ['active', 'pending_checkout'])
             ->where('check_in_at', '<', $checkOut)
-            ->where(function ($q) use ($checkIn, $roomId) {
+            ->where(function ($q) use ($checkIn, $roomId, $oneDayAfterCheckInSql) {
                 $q->where(function ($q2) use ($checkIn) {
                     $q2->whereNotNull('check_out_at')
                         ->where('check_out_at', '>', $checkIn);
-                })->orWhere(function ($q2) use ($checkIn, $roomId) {
+                })->orWhere(function ($q2) use ($checkIn, $roomId, $oneDayAfterCheckInSql) {
                     $q2->whereNull('check_out_at')
                         // Regla de negocio temporal:
                         // Si check_out_at es NULL, tratar la stay como de 1 noche.
-                        ->whereRaw('DATE_ADD(check_in_at, INTERVAL 1 DAY) > ?', [$checkIn->toDateTimeString()]);
+                        ->whereRaw($oneDayAfterCheckInSql, [$checkIn->toDateTimeString()]);
                 });
             })
             ->orderByDesc('check_in_at');

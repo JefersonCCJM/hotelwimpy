@@ -1,0 +1,7 @@
+interface:
+  display_name: "RoomManager Performance"
+  short_description: "Optimize RoomManager safely and fast"
+  default_prompt: "Use $roommanager-performance-guardrails to refactor RoomManager for speed without breaking hotel operational rules."
+
+policy:
+  allow_implicit_invocation: true

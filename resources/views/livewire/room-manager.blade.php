@@ -1,12 +1,12 @@
 ﻿{{-- 
     SINCRONIZACION EN TIEMPO REAL:
     - Mecanismo principal: Eventos Livewire (inmediatos cuando ambos componentes estan montados)
-    - Mecanismo fallback: Polling cada 5s (garantiza sincronizacion 5s si el evento se pierde)
+    - Mecanismo fallback: Polling visible cada 3s (garantiza sincronizacion rapida si el evento se pierde)
     - NO se usan WebSockets para mantener simplicidad y evitar infraestructura adicional
     - El polling es eficiente porque usa eager loading y no hace N+1 queries
 --}}
     <div class="space-y-6 min-w-0" 
-     wire:poll.5s="refreshRoomsPolling"
+     wire:poll.visible.3s="refreshRoomsPolling"
      x-data="{
     quickRentModal: @entangle('quickRentModal'),
     quickReservationModal: @entangle('quickReservationModal'),
@@ -213,6 +213,9 @@
         <x-room-manager.rooms-table 
             :rooms="$rooms" 
             :currentDate="$currentDate" 
+            :roomRowVersions="$roomRowVersions"
+            :roomsGridVersion="$roomsGridVersion"
+            :hasVisibilityFilters="!empty($statusFilter) || !empty($cleaningStatusFilter)"
         />
     @elseif($activeTab === 'history')
         <!-- HISTORIAL DE LIBERACIONES -->

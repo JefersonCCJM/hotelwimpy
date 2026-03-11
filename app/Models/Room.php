@@ -8,6 +8,7 @@ use Illuminate\Database\Eloquent\Relations\HasMany;
 use App\Enums\RoomDisplayStatus;
 use App\Support\HotelTime;
 use Carbon\Carbon;
+use Illuminate\Support\Facades\Schema;
 
 class Room extends Model
 {
@@ -101,6 +102,11 @@ class Room extends Model
         return $this->hasMany(RoomDailyStatus::class);
     }
 
+    public function operationalStatuses(): HasMany
+    {
+        return $this->hasMany(RoomOperationalStatus::class);
+    }
+
     public function quickReservations(): HasMany
     {
         return $this->hasMany(RoomQuickReservation::class);
@@ -145,6 +151,23 @@ class Room extends Model
     {
         return $this->getAvailabilityService()->getStayForDate($date) !== null;
     }
+
+    private function hasOperationalOccupancyOn(Carbon $date): bool
+    {
+        $operationalDate = $date->copy()->startOfDay();
+        $operationalStart = HotelTime::startOfOperationalDay($operationalDate);
+        $operationalEnd = HotelTime::endOfOperationalDay($operationalDate);
+
+        return $this->stays()
+            ->whereIn('status', ['active', 'pending_checkout'])
+            ->where('check_in_at', '<=', $operationalEnd)
+            ->where(function ($query) use ($operationalStart) {
+                $query->whereNull('check_out_at')
+                    ->orWhere('check_out_at', '>=', $operationalStart);
+            })
+            ->exists();
+    }
+
     /**
      * Get the active reservation for a specific date.
      * DEPRECATED: Use RoomAvailabilityService instead.
@@ -198,11 +221,42 @@ class Room extends Model
      *
      * @return bool
      */
-    public function isInMaintenance(): bool
+    public function isInMaintenance(?Carbon $date = null): bool
     {
+        $date = ($date ?? HotelTime::currentOperationalDate())->copy()->startOfDay();
+        $operationalStart = HotelTime::startOfOperationalDay($date);
+        $operationalEnd = HotelTime::endOfOperationalDay($date);
+
+        if ($this->hasOperationalMaintenanceOverrideOn($date)) {
+            return true;
+        }
+
+        if (!Schema::hasTable('room_maintenance_blocks') || !Schema::hasTable('room_maintenance_block_statuses')) {
+            return false;
+        }
+
+        if ($this->relationLoaded('maintenanceBlocks')) {
+            return $this->maintenanceBlocks->contains(function (RoomMaintenanceBlock $block) use ($operationalStart, $operationalEnd): bool {
+                $startAt = $block->start_at instanceof Carbon
+                    ? $block->start_at
+                    : Carbon::parse((string) $block->start_at);
+
+                $endAt = $block->end_at instanceof Carbon
+                    ? $block->end_at
+                    : ($block->end_at ? Carbon::parse((string) $block->end_at) : null);
+
+                return $startAt->lte($operationalEnd) && ($endAt === null || $endAt->gte($operationalStart));
+            });
+        }
+
         return $this->maintenanceBlocks()
-            ->whereHas('status', function($q) {
+            ->whereHas('status', function ($q) {
                 $q->where('code', 'active');
+            })
+            ->where('start_at', '<=', $operationalEnd)
+            ->where(function ($query) use ($operationalStart) {
+                $query->whereNull('end_at')
+                    ->orWhere('end_at', '>=', $operationalStart);
             })
             ->exists();
     }
@@ -231,6 +285,18 @@ class Room extends Model
     public function cleaningStatus(?\Carbon\Carbon $date = null): array
     {
         $date = $date ?? HotelTime::currentOperationalDate();
+        $date = $date->copy()->startOfDay();
+
+        if ($this->isInMaintenance($date)) {
+            return $this->getMaintenanceStatus();
+        }
+
+        return $this->baseCleaningStatus($date);
+    }
+
+    public function baseCleaningStatus(?\Carbon\Carbon $date = null): array
+    {
+        $date = $date ?? HotelTime::currentOperationalDate();
         $today = HotelTime::currentOperationalDate();
         $queryDate = $date->copy()->startOfDay();
         $endOfQueryDay = $queryDate->copy()->endOfDay();
@@ -257,7 +323,7 @@ class Room extends Model
     private function calculateHistoricalCleaningStatus(Carbon $date): array
     {
         $queryDate = $date->copy()->startOfDay();
-        $endOfQueryDay = $queryDate->copy()->endOfDay();
+        $operationalEnd = HotelTime::endOfOperationalDay($queryDate);
 
         // Check if there was a stay active on this date
         $stay = $this->getAvailabilityService()->getStayForDate($date);
@@ -270,7 +336,7 @@ class Room extends Model
         // No stay on this date, check if a stay ended on or before this date
         $lastStayBeforeDate = $this->stays()
             ->whereNotNull('check_out_at')
-            ->where('check_out_at', '<=', $endOfQueryDay)
+            ->where('check_out_at', '<=', $operationalEnd)
             ->orderByDesc('check_out_at')
             ->first();
 
@@ -292,7 +358,7 @@ class Room extends Model
 
         // CRITICAL: Only consider cleaning if it happened on or before the query date
         // If cleaning happened AFTER the query date, it doesn't affect the past
-        if ($cleaningDate->gt($endOfQueryDay)) {
+        if ($cleaningDate->gt($operationalEnd)) {
             // Cleaning happened AFTER this date → pending_cleaning on this date
             return $this->getPendingCleaningStatus();
         }
@@ -316,20 +382,23 @@ class Room extends Model
      */
     private function calculateCurrentCleaningStatus(Carbon $date): array
     {
+        $operationalDate = $date->copy()->startOfDay();
+        $operationalEnd = HotelTime::endOfOperationalDay($operationalDate);
+
         // If never cleaned or explicitly marked as needing cleaning (last_cleaned_at is NULL)
         if (!$this->last_cleaned_at) {
             return $this->getPendingCleaningStatus();
         }
 
         // Check if room is currently occupied (Dependency Inversion - uses abstraction)
-        $isOccupied = $this->isOccupied($date);
+        $isOccupied = $this->hasOperationalOccupancyOn($date);
 
         // If room is NOT occupied, check if there was a recent checkout that needs cleaning
         if (!$isOccupied) {
             // Check if there was a checkout on or before this date
             $lastFinishedStay = $this->stays()
                 ->whereNotNull('check_out_at')
-                ->whereDate('check_out_at', '<=', $date)
+                ->where('check_out_at', '<=', $operationalEnd)
                 ->latest('check_out_at')
                 ->first();
 
@@ -351,9 +420,9 @@ class Room extends Model
 
         // If room is OCCUPIED, check if cleaning occurred before check-in
         // Get active reservation to compare cleaning date with check-in date
-        $reservation = $this->reservations()
-            ->where('check_in_date', '<=', $date)
-            ->where('check_out_date', '>', $date)
+        $reservationRoom = $this->reservationRooms()
+            ->whereDate('check_in_date', '<=', $date->toDateString())
+            ->whereDate('check_out_date', '>', $date->toDateString())
             ->orderBy('check_in_date', 'asc')
             ->first();
 
@@ -366,8 +435,8 @@ class Room extends Model
 
         // If room was cleaned BEFORE check-in, it stays clean during the stay
         // Hotel rule: cleaning before guest arrival is valid for the entire initial stay
-        if ($reservation) {
-            $checkInDate = \Carbon\Carbon::parse($reservation->check_in_date)->startOfDay();
+        if ($reservationRoom?->check_in_date) {
+            $checkInDate = \Carbon\Carbon::parse($reservationRoom->check_in_date)->startOfDay();
 
             // If cleaning occurred before check-in, room is clean (no 24-hour rule applies)
             if ($cleaningDateNormalized->lt($checkInDate)) {
@@ -416,6 +485,16 @@ class Room extends Model
             'label' => 'Limpia',
             'color' => 'bg-green-100 text-green-800',
             'icon' => 'fa-check-circle',
+        ];
+    }
+
+    private function getMaintenanceStatus(): array
+    {
+        return [
+            'code' => 'mantenimiento',
+            'label' => 'Mantenimiento',
+            'color' => 'bg-amber-100 text-amber-800',
+            'icon' => 'fa-screwdriver-wrench',
         ];
     }
 
@@ -478,7 +557,7 @@ class Room extends Model
     private function calculateHistoricalOperationalStatus(Carbon $date): string
     {
         $queryDate = $date->copy()->startOfDay();
-        $endOfQueryDay = $date->copy()->endOfDay();
+        $operationalEnd = HotelTime::endOfOperationalDay($queryDate);
 
         // Get stay that intersected this date
         $stay = $this->getAvailabilityService()->getStayForDate($date);
@@ -502,12 +581,12 @@ class Room extends Model
                 // Si la fecha ES el día del checkout y checkout no ejecutado → pending_checkout
                 // (Para fechas pasadas, esto solo aplica si check_out_at es NULL o después de esta fecha)
                 if ($queryDate->equalTo($checkoutDate) && 
-                    (is_null($stay->check_out_at) || $stay->check_out_at->gt($endOfQueryDay))) {
+                    (is_null($stay->check_out_at) || $stay->check_out_at->gt($operationalEnd))) {
                     return 'pending_checkout';
                 }
             } else {
                 // Si no hay reservation_room o check_out_date, verificar check_out_at
-                if (is_null($stay->check_out_at) || $stay->check_out_at->gt($endOfQueryDay)) {
+                if (is_null($stay->check_out_at) || $stay->check_out_at->gt($operationalEnd)) {
                     return 'occupied';
                 }
             }
@@ -517,7 +596,7 @@ class Room extends Model
         // and it wasn't cleaned after checkout (by the end of this day)
         $lastFinishedStay = $this->stays()
             ->whereNotNull('check_out_at')
-            ->whereDate('check_out_at', '<=', $date)
+            ->where('check_out_at', '<=', $operationalEnd)
             ->latest('check_out_at')
             ->first();
 
@@ -532,7 +611,7 @@ class Room extends Model
                 : \Carbon\Carbon::parse($this->last_cleaned_at);
 
             // CRITICAL: Only consider cleaning if it happened on or before the query date
-            if ($cleaningDate->gt($endOfQueryDay)) {
+            if ($cleaningDate->gt($operationalEnd)) {
                 // Cleaning happened AFTER this date → pending_cleaning on this date
                 return 'pending_cleaning';
             }
@@ -625,7 +704,7 @@ class Room extends Model
     private function calculateCurrentOperationalStatus(Carbon $date): string
     {
         $queryDate = $date->copy()->startOfDay();
-        $endOfQueryDay = $date->copy()->endOfDay();
+        $operationalEnd = HotelTime::endOfOperationalDay($queryDate);
 
         // 1️⃣ Buscar stay que INTERSECTE con la fecha
         $stay = $this->getAvailabilityService()->getStayForDate($date);
@@ -636,7 +715,7 @@ class Room extends Model
             // No necesitamos reservation_room para este caso
             if (!is_null($stay->check_out_at)) {
                 // Si checkout ocurrió DESPUÉS de esta fecha → todavía ocupada
-                if ($stay->check_out_at->gt($endOfQueryDay)) {
+                if ($stay->check_out_at->gt($operationalEnd)) {
                     return 'occupied';
                 }
                 // Si checkout ocurrió en o antes de esta fecha, la stay ya terminó
@@ -676,7 +755,7 @@ class Room extends Model
         // Si hubo checkout ANTES o EN esta fecha y no se limpió después
         $lastFinishedStay = $this->stays()
             ->whereNotNull('check_out_at')
-            ->whereDate('check_out_at', '<=', $date)
+            ->where('check_out_at', '<=', $operationalEnd)
             ->latest('check_out_at')
             ->first();
 
@@ -786,6 +865,44 @@ class Room extends Model
     public function getCleaningStatusAttribute(): array
     {
         return $this->cleaningStatus();
+    }
+
+    public function dailyObservation(?Carbon $date = null): ?string
+    {
+        return $this->getOperationalStatusRecordForDate($date)?->observation;
+    }
+
+    public function hasOperationalMaintenanceOverrideOn(?Carbon $date = null): bool
+    {
+        return $this->getOperationalStatusRecordForDate($date)?->cleaning_override_status === 'mantenimiento';
+    }
+
+    public function getOperationalStatusRecordForDate(?Carbon $date = null): ?RoomOperationalStatus
+    {
+        $date = ($date ?? HotelTime::currentOperationalDate())->copy()->startOfDay();
+        $dateString = $date->toDateString();
+
+        if (!Schema::hasTable('room_operational_statuses')) {
+            return null;
+        }
+
+        if ($this->relationLoaded('operationalStatuses')) {
+            $loadedStatus = $this->operationalStatuses->first(function (RoomOperationalStatus $status) use ($dateString): bool {
+                $statusDate = $status->operational_date instanceof Carbon
+                    ? $status->operational_date->toDateString()
+                    : (string) $status->operational_date;
+
+                return $statusDate === $dateString;
+            });
+
+            if ($loadedStatus) {
+                return $loadedStatus;
+            }
+        }
+
+        return $this->operationalStatuses()
+            ->whereDate('operational_date', $dateString)
+            ->first();
     }
 
     /**

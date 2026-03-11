@@ -15,10 +15,9 @@ use App\Models\DianIdentificationDocument;
 use App\Models\DianLegalOrganization;
 use App\Models\DianCustomerTribute;
 use App\Models\DianMunicipality;
-use App\Models\ShiftHandover;
-use App\Enums\ShiftHandoverStatus;
 use App\Http\Requests\StoreReservationRequest;
 use App\Services\AuditService;
+use App\Services\ReservationCancellationService;
 use App\Services\ReservationReportService;
 use App\Support\HotelTime;
 use Illuminate\Http\Request;
@@ -28,6 +27,7 @@ use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Facades\Validator;
 use Illuminate\Database\Eloquent\Collection;
+use Illuminate\Support\Str;
 use Barryvdh\DomPDF\Facade\Pdf;
 use Carbon\Carbon;
 use Throwable;
@@ -36,6 +36,7 @@ class ReservationController extends Controller
 {
     public function __construct(
         private AuditService $auditService,
+        private ReservationCancellationService $reservationCancellationService,
         private ReservationReportService $reportService
     ) {}
     /**
@@ -56,6 +57,45 @@ class ReservationController extends Controller
                 'exception' => $e,
             ]);
         }
+    }
+
+    private function resolveCheckedInReservationStatusId(): ?int
+    {
+        $normalize = static function (?string $value): string {
+            $raw = trim((string) ($value ?? ''));
+            if ($raw === '') {
+                return '';
+            }
+
+            $normalized = Str::ascii(strtolower($raw));
+            $normalized = str_replace(['-', ' '], '_', $normalized);
+
+            return preg_replace('/_+/', '_', $normalized) ?? '';
+        };
+
+        $statuses = DB::table('reservation_statuses')
+            ->select(['id', 'code', 'name'])
+            ->get();
+
+        $match = $statuses->first(function ($status) use ($normalize): bool {
+            $code = $normalize((string) ($status->code ?? ''));
+            $name = $normalize((string) ($status->name ?? ''));
+
+            if (in_array($code, ['checked_in', 'check_in', 'checkedin', 'arrived', 'llego'], true)) {
+                return true;
+            }
+
+            if (in_array($name, ['checked_in', 'check_in', 'checkedin', 'arrived', 'llego'], true)) {
+                return true;
+            }
+
+            return (str_contains($code, 'check') && str_contains($code, 'in'))
+                || (str_contains($name, 'check') && str_contains($name, 'in'))
+                || str_contains($code, 'llego')
+                || str_contains($name, 'llego');
+        });
+
+        return $match ? (int) $match->id : null;
     }
     /**
      * Display a listing of the resource.
@@ -953,52 +993,44 @@ class ReservationController extends Controller
      */
     public function destroy(Request $request, Reservation $reservation)
     {
-        $reservation->delete();
+        try {
+            $result = $this->reservationCancellationService->cancelCompletely($reservation, Auth::id());
 
-        // Revertir abonos del turno activo al cancelar la reserva
-        $activeShift = ShiftHandover::where('entregado_por', Auth::id())
-            ->where('status', ShiftHandoverStatus::ACTIVE)
-            ->first();
+            // Audit log for reservation cancellation
+            $this->auditService->logReservationCancelled($reservation, request());
 
-        if ($activeShift && $activeShift->started_at) {
-            $shiftStart = $activeShift->started_at;
-            $shiftEnd = now();
+            // Dispatch Livewire event for stats update
+            $this->safeLivewireDispatch('reservation-cancelled');
 
-            $paymentsInShift = Payment::where('reservation_id', $reservation->id)
-                ->where('amount', '>', 0)
-                ->whereBetween(DB::raw('COALESCE(paid_at, created_at)'), [$shiftStart, $shiftEnd])
-                ->get();
-
-            foreach ($paymentsInShift as $payment) {
-                Payment::create([
-                    'reservation_id' => $reservation->id,
-                    'amount'          => -abs((float) $payment->amount),
-                    'payment_method_id' => $payment->payment_method_id,
-                    'paid_at'         => now(),
-                    'created_by'      => Auth::id(),
-                    'notes'           => 'Reversión por cancelación de reserva ' . ($reservation->reservation_code ?? '#' . $reservation->id),
+            if ($request->expectsJson() || $request->ajax()) {
+                return response()->json([
+                    'ok' => true,
+                    'message' => 'Reserva cancelada completamente.',
+                    'data' => $result,
                 ]);
             }
 
-            if ($paymentsInShift->isNotEmpty()) {
-                $activeShift->updateTotals();
+            return redirect()
+                ->route('reservations.index')
+                ->with('success', 'Reserva cancelada completamente.');
+        } catch (Throwable $e) {
+            Log::error('Error cancelling reservation completely', [
+                'reservation_id' => $reservation->id ?? null,
+                'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString(),
+            ]);
+
+            if ($request->expectsJson() || $request->ajax()) {
+                return response()->json([
+                    'ok' => false,
+                    'message' => 'No fue posible cancelar la reserva completamente.',
+                ], 500);
             }
-        }
 
-        // Audit log for reservation cancellation
-        $this->auditService->logReservationCancelled($reservation, request());
-
-        // Dispatch Livewire event for stats update
-        $this->safeLivewireDispatch('reservation-cancelled');
-
-        if ($request->expectsJson() || $request->ajax()) {
-            return response()->json([
-                'ok' => true,
-                'message' => 'Reserva cancelada correctamente.',
+            return back()->withErrors([
+                'reservation' => 'No fue posible cancelar la reserva completamente.',
             ]);
         }
-
-        return redirect()->route('reservations.index')->with('success', 'Reserva cancelada correctamente.');
     }
 
     /**
@@ -1099,9 +1131,7 @@ class ReservationController extends Controller
                 $this->rebuildStayNightPaidStateFromPayments($reservation);
                 $this->syncReservationFinancials($reservation);
 
-                $checkedInStatusId = DB::table('reservation_statuses')
-                    ->where('code', 'checked_in')
-                    ->value('id');
+                $checkedInStatusId = $this->resolveCheckedInReservationStatusId();
 
                 if (!empty($checkedInStatusId)) {
                     $reservation->status_id = (int) $checkedInStatusId;
@@ -2768,3 +2798,4 @@ class ReservationController extends Controller
         }
     }
 }
+

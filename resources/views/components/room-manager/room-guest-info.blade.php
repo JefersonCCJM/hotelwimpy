@@ -73,7 +73,7 @@
                 <p class="text-sm font-bold text-gray-900 truncate">
                     @if($reservation->customer)
                         <button type="button"
-                                wire:click="showAllGuests({{ $reservation->id }}, {{ $room->id }})"
+                                wire:click="$parent.showAllGuests({{ $reservation->id }}, {{ $room->id }})"
                                 title="{{ $reservation->customer->name }}"
                                 class="block w-full truncate text-left text-blue-600 hover:text-blue-800 underline hover:bg-blue-50 px-1 rounded transition-colors">
                             {{ $reservation->customer->name }}
@@ -91,7 +91,7 @@
                 {{-- BOTON EDITAR/COMPLETAR OCUPACION --}}
                 @if($canEditOccupancy && !$isPastDate)
                     <button type="button"
-                            wire:click="openAssignGuests({{ $room->id }})"
+                            wire:click="$parent.openAssignGuests({{ $room->id }})"
                             class="mt-2 text-xs text-blue-600 hover:text-blue-800 underline font-medium flex items-center space-x-1">
                         <i class="fas {{ (!$reservation->customer || !$reservation->client_id) ? 'fa-user-plus' : 'fa-user-edit' }}"></i>
                         <span>{{ (!$reservation->customer || !$reservation->client_id) ? 'Asignar huesped' : 'Editar ocupacion' }}</span>
@@ -142,7 +142,7 @@
             No hay reserva ligada a esta estadia.
         </div>
         <button type="button"
-                wire:click="openRoomDetail({{ $room->id }})"
+                wire:click="$parent.openRoomDetail({{ $room->id }})"
                 class="text-xs text-blue-600 hover:text-blue-800 underline font-medium mt-1">
             Ver detalles
         </button>

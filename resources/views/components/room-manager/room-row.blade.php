@@ -1,6 +1,7 @@
 ﻿@props(['room', 'currentDate'])
 
 @php
+    use App\Enums\RoomDisplayStatus;
     use App\Support\HotelTime;
     use Carbon\Carbon;
     
@@ -11,93 +12,36 @@
     // Para fechas pasadas, este metodo retorna el estado historico (inmutable)
     // Valores permitidos: 'occupied', 'pending_checkout', 'pending_cleaning', 'free_clean'
     $operationalStatus = $room->getOperationalStatus($selectedDate);
+    $displayStatus = $room->display_status instanceof RoomDisplayStatus
+        ? $room->display_status
+        : $room->getDisplayStatus($selectedDate);
+    $rowOperationalStatus = $displayStatus === RoomDisplayStatus::MANTENIMIENTO
+        ? 'maintenance'
+        : $operationalStatus;
     
     // SINGLE SOURCE OF TRUTH: Obtener stay UNA SOLA VEZ para la fecha seleccionada
     // CRITICAL: Solo usar stay para mostrar info de huesped/cuenta cuando operationalStatus es 'occupied' o 'pending_checkout'
     // Si operationalStatus es 'pending_cleaning' o 'free_clean', NO hay stay activa para mostrar
-    $stay = null;
-    if (in_array($operationalStatus, ['occupied', 'pending_checkout'])) {
-        $stay = $room->getAvailabilityService()->getStayForDate($selectedDate);
-        
-        // Eager loading de relaciones necesarias para evitar N+1 queries
-        if ($stay) {
-            $stay->loadMissing([
-                'reservation.customer',
-                'reservation.reservationRooms' => function ($query) use ($room) {
-                    $query->where('room_id', $room->id);
-                }
-            ]);
-        }
-    }
+    $stay = in_array($operationalStatus, ['occupied', 'pending_checkout'])
+        ? ($room->current_stay ?? null)
+        : null;
 
+    $cleaningCode = data_get($room->cleaningStatus($selectedDate), 'code', 'limpia');
+    $isQuickReserved = (bool) ($room->is_quick_reserved ?? false);
+    $pendingCheckinReservation = $room->pending_checkin_reservation ?? $room->future_reservation ?? null;
+    $pendingCheckinReservationCode = strtoupper(trim((string) ($pendingCheckinReservation->reservation_code ?? '')));
+    $isPendingReservation = $pendingCheckinReservation && str_starts_with($pendingCheckinReservationCode, 'RES-');
     $hasStayInfo = $stay && $stay->reservation;
-    $currentReservation = $hasStayInfo ? $stay->reservation : null;
-    $currentReservationCode = strtoupper(trim((string) ($currentReservation->reservation_code ?? '')));
-    $selectedDateNormalized = $selectedDate->copy()->startOfDay();
-    $reservationBadge = null;
-    $isCheckoutDayForReservation = static function ($reservation) use ($room, $selectedDateNormalized): bool {
-        if (!$reservation || !isset($reservation->reservationRooms)) {
-            return false;
-        }
-
-        $reservationRoom = $reservation->reservationRooms->first(function ($item) use ($room) {
-            return (int) ($item->room_id ?? 0) === (int) ($room->id ?? 0) && !empty($item->check_out_date);
-        });
-
-        if (!$reservationRoom || empty($reservationRoom->check_out_date)) {
-            return false;
-        }
-
-        $checkOut = Carbon::parse((string) $reservationRoom->check_out_date)->startOfDay();
-
-        return $selectedDateNormalized->isSameDay($checkOut);
-    };
-
-    // Prioridad 1: reserva actual de la estadia (si es RES-)
-    if (
-        $currentReservation
-        && str_starts_with($currentReservationCode, 'RES-')
-        && !$isCheckoutDayForReservation($currentReservation)
-    ) {
-        $reservationBadge = $currentReservation;
-    }
-
-    // Prioridad 2: reserva contractual del dia seleccionado (sin stay aun), solo RES-
-    if (!$reservationBadge && isset($room->reservationRooms)) {
-        $reservationRoomForDate = $room->reservationRooms->first(function ($reservationRoom) use ($selectedDateNormalized) {
-            $reservation = $reservationRoom->reservation ?? null;
-            if (!$reservation) {
-                return false;
-            }
-
-            if (method_exists($reservation, 'trashed') && $reservation->trashed()) {
-                return false;
-            }
-
-            $code = strtoupper(trim((string) ($reservation->reservation_code ?? '')));
-            if (!str_starts_with($code, 'RES-')) {
-                return false;
-            }
-
-            if (empty($reservationRoom->check_in_date) || empty($reservationRoom->check_out_date)) {
-                return false;
-            }
-
-            $checkIn = Carbon::parse((string) $reservationRoom->check_in_date)->startOfDay();
-            $checkOut = Carbon::parse((string) $reservationRoom->check_out_date)->startOfDay();
-
-            // Regla: en el dia de checkout NO mostrar etiqueta.
-            return $selectedDateNormalized->gte($checkIn) && $selectedDateNormalized->lt($checkOut);
-        });
-
-        if ($reservationRoomForDate && !empty($reservationRoomForDate->reservation)) {
-            $reservationBadge = $reservationRoomForDate->reservation;
-        }
-    }
-
+    $reservationBadge = !$hasStayInfo && $isPendingReservation ? $pendingCheckinReservation : null;
     $reservationBadgeCode = strtoupper(trim((string) ($reservationBadge->reservation_code ?? '')));
     $hasReservationBadge = str_starts_with($reservationBadgeCode, 'RES-');
-    $isQuickReserved = (bool) ($room->is_quick_reserved ?? false);
+    $rowStateKey = implode('-', [
+        (string) $rowOperationalStatus,
+        (string) $cleaningCode,
+        $isQuickReserved ? '1' : '0',
+        $hasStayInfo ? (string) ($stay->id ?? 0) : '0',
+        $hasReservationBadge ? md5($reservationBadgeCode) : 'none',
+    ]);
 @endphp
 
 <tr
@@ -106,7 +50,7 @@
         recentlyReleased: false,
         // Estado inicial desde BD (Single Source of Truth)
         // Valores permitidos: 'occupied', 'pending_checkout', 'pending_cleaning', 'free_clean'
-        operationalStatus: '{{ $operationalStatus }}',
+        operationalStatus: '{{ $rowOperationalStatus }}',
         quickReserved: @js($isQuickReserved),
         isPastDate: @js($isPastDate),
         // Computed: Determina el estado visual a mostrar
@@ -196,18 +140,19 @@
     :class="{
         'bg-emerald-50': displayState === 'released',
         'bg-blue-50/60': displayState === 'quick_reserved',
+        'bg-amber-50/40': displayState === 'maintenance',
         'bg-red-50/40': displayState === 'occupied',
         'bg-orange-50/30': displayState === 'pending_checkout',
         'bg-yellow-50/30': displayState === 'pending_cleaning',
         'bg-emerald-50/30': displayState === 'free_clean'
     }"
-    wire:key="room-{{ $room->id }}" style="position: static;">
+    wire:key="room-{{ $room->id }}-{{ $rowStateKey }}" style="position: static;">
     <td class="px-6 py-4 whitespace-nowrap align-top">
         <div class="flex items-center">
             <div class="h-10 w-10 rounded-lg bg-gray-100 flex items-center justify-center mr-3 text-gray-400 group-hover:bg-blue-50 group-hover:text-blue-600 transition-colors">
                 <i class="fas fa-door-closed"></i>
             </div>
-            <div wire:click="openRoomDetail({{ $room->id }})" class="cursor-pointer">
+            <div wire:click="$parent.openRoomDetail({{ $room->id }})" class="cursor-pointer">
                 <div class="text-sm font-semibold text-gray-900">Hab. {{ $room->room_number }}</div>
                 <div class="text-xs text-gray-500">
                     {{ $room->beds_count }} {{ $room->beds_count == 1 ? 'Cama' : 'Camas' }} | Cap. {{ $room->max_capacity }}
@@ -224,6 +169,7 @@
                     'bg-gray-100 text-gray-600': displayState === 'releasing',
                     'bg-emerald-100 text-emerald-700 border border-emerald-200': displayState === 'released',
                     'bg-blue-100 text-blue-700 border border-blue-200': displayState === 'quick_reserved',
+                    'bg-amber-100 text-amber-700 border border-amber-200': displayState === 'maintenance',
                     'bg-red-100 text-red-700 border border-red-200': displayState === 'occupied',
                     'bg-orange-100 text-orange-700 border border-orange-200': displayState === 'pending_checkout',
                     'bg-yellow-100 text-yellow-700 border border-yellow-200': displayState === 'pending_cleaning',
@@ -238,6 +184,9 @@
                 </template>
                 <template x-if="displayState === 'quick_reserved'">
                     <span><i class="fas fa-bookmark mr-1"></i>Reservada</span>
+                </template>
+                <template x-if="displayState === 'maintenance'">
+                    <span><i class="fas fa-screwdriver-wrench mr-1"></i>Mantenimiento</span>
                 </template>
                 <template x-if="displayState === 'occupied'">
                     <span>Ocupada</span>
@@ -255,7 +204,7 @@
                 </template>
             </span>
 
-            @if ($hasReservationBadge)
+            @if ($hasReservationBadge && $rowOperationalStatus !== 'maintenance')
                 <div
                     class="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-semibold bg-blue-50 text-blue-600 border border-blue-200"
                     title="{{ $reservationBadge->customer->name ?? '' }}">
@@ -270,6 +219,10 @@
     <td class="px-6 py-4 whitespace-nowrap text-center align-top">
         {{-- SINGLE SOURCE OF TRUTH: El estado de limpieza se calcula independientemente del estado operativo --}}
         <x-room-manager.room-cleaning-status :room="$room" :selectedDate="$selectedDate" />
+    </td>
+
+    <td class="px-6 py-4 align-top">
+        <x-room-manager.room-daily-observation :room="$room" :selectedDate="$selectedDate" />
     </td>
 
     <td class="px-6 py-4 whitespace-nowrap text-center align-top">
@@ -287,7 +240,9 @@
         @if($hasStayInfo)
             <x-room-manager.room-guest-info :room="$room" :stay="$stay" :selectedDate="$selectedDate" />
         @else
-            @if($operationalStatus === 'pending_cleaning')
+            @if($rowOperationalStatus === 'maintenance')
+                <span class="text-xs font-semibold text-amber-700">Bloqueada por mantenimiento</span>
+            @elseif($operationalStatus === 'pending_cleaning')
                 <span class="text-xs text-gray-500 italic">Checkout realizado</span>
             @elseif($isQuickReserved && $operationalStatus === 'free_clean')
                 <span class="text-xs text-blue-700 font-semibold">Reservada sin datos</span>
@@ -301,7 +256,12 @@
         @if($hasStayInfo)
             <x-room-manager.room-payment-info :room="$room" :stay="$stay" :selectedDate="$selectedDate" />
         @else
-            @if($operationalStatus === 'pending_cleaning')
+            @if($rowOperationalStatus === 'maintenance')
+                <div class="flex flex-col">
+                    <span class="text-xs font-semibold text-amber-700">No disponible</span>
+                    <span class="text-[10px] text-amber-600">La habitacion esta en mantenimiento</span>
+                </div>
+            @elseif($operationalStatus === 'pending_cleaning')
                 <div class="flex flex-col">
                     <span class="text-xs text-gray-500 font-semibold">Cuenta cerrada</span>
                     <span class="text-[10px] text-gray-400">Marcar como limpia para arrendar</span>
@@ -309,7 +269,7 @@
             @elseif($isQuickReserved && $operationalStatus === 'free_clean')
                 <div class="flex flex-col">
                     <span class="text-sm font-semibold text-gray-900">${{ number_format($room->base_price_per_night ?? 0, 0, ',', '.') }}</span>
-                    <span class="text-xs text-blue-600">reserva rapida del dia</span>
+                    <span class="text-xs text-blue-600">{{ $isPendingReservation ? 'reserva pendiente de check-in' : 'reserva rapida del dia' }}</span>
                 </div>
             @else
                 <div class="flex flex-col">

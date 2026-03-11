@@ -18,16 +18,28 @@
     $canPerformActions = !$isFutureDate && !$isPastDate;
     $canManageRooms = auth()->check() && auth()->user()->hasRole('Administrador');
     $isQuickReserved = (bool) ($room->is_quick_reserved ?? false);
+    $hasPendingReservation = !empty($room->pending_checkin_reservation) || !empty($room->future_reservation);
+    $isInMaintenance = $room->isInMaintenance($selectedDate);
+    $actionsKey = implode('-', [
+        (int) $room->id,
+        $selectedDate->format('Y-m-d'),
+        (string) $operationalStatus,
+        (string) $cleaningCode,
+        $isPendingCheckout ? '1' : '0',
+        $isQuickReserved ? '1' : '0',
+        $hasPendingReservation ? '1' : '0',
+        $isInMaintenance ? '1' : '0',
+    ]);
 @endphp
 
-<div class="flex items-center justify-end gap-1.5">
+<div wire:key="room-actions-{{ $actionsKey }}" class="flex items-center justify-end gap-1.5">
     {{-- ESTADO: free_clean (Libre y limpia) --}}
-    @if($operationalStatus === 'free_clean' && $cleaningCode === 'limpia')
+    @if($operationalStatus === 'free_clean' && $cleaningCode === 'limpia' && !$isInMaintenance)
         @if($isFutureDate)
             {{-- Cambiar habitacion de reserva futura pendiente --}}
             @if($room->future_reservation)
                 <button type="button"
-                    wire:click="openChangeRoom({{ $room->id }})"
+                    wire:click="$parent.openChangeRoom({{ $room->id }})"
                     wire:loading.attr="disabled"
                     title="Cambiar habitacion de reserva pendiente"
                     class="inline-flex items-center justify-center w-8 h-8 rounded-lg border border-purple-200 bg-purple-50 text-purple-600 hover:bg-purple-100 hover:border-purple-300 transition-colors focus:outline-none focus:ring-2 focus:ring-purple-500 disabled:opacity-50">
@@ -37,9 +49,9 @@
             @endif
         @elseif($canPerformActions)
             {{-- Cambiar habitacion de reserva futura si tiene RES- --}}
-            @if($room->future_reservation)
+            @if($hasPendingReservation)
                 <button type="button"
-                    wire:click="openChangeRoom({{ $room->id }})"
+                    wire:click="$parent.openChangeRoom({{ $room->id }})"
                     wire:loading.attr="disabled"
                     title="Cambiar habitacion de reserva pendiente"
                     class="inline-flex items-center justify-center w-8 h-8 rounded-lg border border-purple-200 bg-purple-50 text-purple-600 hover:bg-purple-100 hover:border-purple-300 transition-colors focus:outline-none focus:ring-2 focus:ring-purple-500 disabled:opacity-50">
@@ -47,31 +59,43 @@
                     <span class="sr-only">Cambiar habitacion</span>
                 </button>
             @endif
-            {{-- Ocupar habitacion (HOY) --}}
-            <button type="button"
-                wire:click="openQuickRent({{ $room->id }})"
-                wire:loading.attr="disabled"
-                title="Ocupar habitacion"
-                class="inline-flex items-center justify-center w-8 h-8 rounded-lg border border-blue-200 bg-blue-50 text-blue-600 hover:bg-blue-100 hover:border-blue-300 transition-colors focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:opacity-50">
-                <i class="fas fa-key text-sm"></i>
-                <span class="sr-only">Ocupar habitacion</span>
-            </button>
+            @if($hasPendingReservation)
+                {{-- Check-in de reserva pendiente (HOY) --}}
+                <button type="button"
+                    wire:click="$parent.performReservationCheckIn({{ $room->id }})"
+                    wire:loading.attr="disabled"
+                    title="Realizar check-in"
+                    class="inline-flex items-center justify-center w-8 h-8 rounded-lg border border-emerald-200 bg-emerald-50 text-emerald-700 hover:bg-emerald-100 hover:border-emerald-300 transition-colors focus:outline-none focus:ring-2 focus:ring-emerald-500 disabled:opacity-50">
+                    <i class="fas fa-door-open text-sm"></i>
+                    <span class="sr-only">Realizar check-in</span>
+                </button>
+            @else
+                {{-- Ocupar habitacion (HOY) --}}
+                <button type="button"
+                    wire:click="$parent.openQuickRent({{ $room->id }})"
+                    wire:loading.attr="disabled"
+                    title="Ocupar habitacion"
+                    class="inline-flex items-center justify-center w-8 h-8 rounded-lg border border-blue-200 bg-blue-50 text-blue-600 hover:bg-blue-100 hover:border-blue-300 transition-colors focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:opacity-50">
+                    <i class="fas fa-key text-sm"></i>
+                    <span class="sr-only">Ocupar habitacion</span>
+                </button>
+            @endif
 
         @endif
 
         @if(!$isPastDate)
             @if($isQuickReserved)
                 <button type="button"
-                    wire:click="cancelQuickReserve({{ $room->id }})"
+                    wire:click="$parent.cancelQuickReserve({{ $room->id }})"
                     wire:loading.attr="disabled"
-                    title="Cancelar reserva rapida"
+                    title="{{ $hasPendingReservation ? 'Cancelar reserva' : 'Cancelar reserva rapida' }}"
                     class="inline-flex items-center justify-center w-8 h-8 rounded-lg border border-gray-300 bg-gray-100 text-gray-700 hover:bg-gray-200 hover:border-gray-400 transition-colors focus:outline-none focus:ring-2 focus:ring-gray-500 disabled:opacity-50">
                     <i class="fas fa-times text-sm"></i>
-                    <span class="sr-only">Cancelar reserva rapida</span>
+                    <span class="sr-only">{{ $hasPendingReservation ? 'Cancelar reserva' : 'Cancelar reserva rapida' }}</span>
                 </button>
             @else
                 <button type="button"
-                    wire:click="markRoomAsQuickReserved({{ $room->id }})"
+                    wire:click="$parent.markRoomAsQuickReserved({{ $room->id }})"
                     wire:loading.attr="disabled"
                     title="Marcar como reservada"
                     class="inline-flex items-center justify-center w-8 h-8 rounded-lg border border-blue-300 bg-blue-100 text-blue-700 hover:bg-blue-200 hover:border-blue-400 transition-colors focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:opacity-50">
@@ -83,10 +107,10 @@
     @endif
 
     {{-- ESTADO: occupied (Ocupada) - NO pendiente de checkout --}}
-    @if($operationalStatus === 'occupied' && !$isPendingCheckout && $canPerformActions && $isOperationalToday)
+    @if($operationalStatus === 'occupied' && !$isPendingCheckout && $canPerformActions && $isOperationalToday && !$isInMaintenance)
         {{-- Cambiar habitacion --}}
         <button type="button"
-            wire:click="openChangeRoom({{ $room->id }})"
+            wire:click="$parent.openChangeRoom({{ $room->id }})"
             wire:loading.attr="disabled"
             title="Cambiar habitacion"
             class="inline-flex items-center justify-center w-8 h-8 rounded-lg border border-purple-200 bg-purple-50 text-purple-600 hover:bg-purple-100 hover:border-purple-300 transition-colors focus:outline-none focus:ring-2 focus:ring-purple-500 disabled:opacity-50">
@@ -104,10 +128,10 @@
     @endif
 
     {{-- ESTADO: pending_checkout (Pendiente por checkout) - SOLO PARA HOY --}}
-    @if($operationalStatus === 'pending_checkout' && $canPerformActions && $isOperationalToday)
+    @if($operationalStatus === 'pending_checkout' && $canPerformActions && $isOperationalToday && !$isInMaintenance)
         {{-- Cambiar habitacion --}}
         <button type="button"
-            wire:click="openChangeRoom({{ $room->id }})"
+            wire:click="$parent.openChangeRoom({{ $room->id }})"
             wire:loading.attr="disabled"
             title="Cambiar habitacion"
             class="inline-flex items-center justify-center w-8 h-8 rounded-lg border border-purple-200 bg-purple-50 text-purple-600 hover:bg-purple-100 hover:border-purple-300 transition-colors focus:outline-none focus:ring-2 focus:ring-purple-500 disabled:opacity-50">
@@ -116,7 +140,7 @@
         </button>
         {{-- Continuar Estadia --}}
         <button type="button"
-            wire:click="continueStay({{ $room->id }})"
+            wire:click="$parent.continueStay({{ $room->id }})"
             wire:loading.attr="disabled"
             title="Continuar estadia"
             class="inline-flex items-center justify-center w-8 h-8 rounded-lg border border-emerald-200 bg-emerald-50 text-emerald-700 hover:bg-emerald-100 hover:border-emerald-300 transition-colors focus:outline-none focus:ring-2 focus:ring-emerald-500 disabled:opacity-50">
@@ -126,8 +150,7 @@
 
         {{-- Cancelar Estadia --}}
         <button type="button"
-            wire:click="releaseRoom({{ $room->id }})"
-            wire:loading.attr="disabled"
+            @click="confirmRelease({{ $room->id }}, '{{ $room->room_number }}', 0, null, false);"
             title="Cancelar estadia"
             class="inline-flex items-center justify-center w-8 h-8 rounded-lg border border-red-200 bg-red-50 text-red-700 hover:bg-red-100 hover:border-red-300 transition-colors focus:outline-none focus:ring-2 focus:ring-red-500 disabled:opacity-50">
             <i class="fas fa-times text-sm"></i>
@@ -149,11 +172,11 @@
         </button>
     @endif --}}
     {{-- Marcar como limpia: solo si cleaningCode es pendiente --}}
-    @if($cleaningCode === 'pendiente' && !in_array($operationalStatus, ['occupied', 'pending_checkout'], true) && $canPerformActions && $isOperationalToday)
+    @if(in_array($cleaningCode, ['pendiente', 'mantenimiento'], true) && !in_array($operationalStatus, ['occupied', 'pending_checkout'], true) && $canPerformActions && $isOperationalToday)
         <button type="button"
-            wire:click="markRoomAsClean({{ $room->id }})"
+            wire:click="$parent.markRoomAsClean({{ $room->id }})"
             wire:loading.attr="disabled"
-            title="Marcar como limpia"
+            title="{{ $cleaningCode === 'mantenimiento' ? 'Cerrar mantenimiento y marcar como limpia' : 'Marcar como limpia' }}"
             class="inline-flex items-center justify-center w-8 h-8 rounded-lg border border-green-200 bg-green-50 text-green-600 hover:bg-green-100 hover:border-green-300 transition-colors focus:outline-none focus:ring-2 focus:ring-green-500 disabled:opacity-50">
             <i class="fas fa-broom text-sm"></i>
             <span class="sr-only">Marcar como limpia</span>
@@ -165,7 +188,7 @@
     {{-- Editar habitacion (no disponible en fechas pasadas ni con stays activos) --}}
     @if($canManageRooms && !$isPastDate && !in_array($operationalStatus, ['occupied', 'pending_checkout']))
         <button type="button"
-            wire:click="openRoomEdit({{ $room->id }})"
+            wire:click="$parent.openRoomEdit({{ $room->id }})"
             wire:loading.attr="disabled"
             title="Editar habitacion"
             class="inline-flex items-center justify-center w-8 h-8 rounded-lg border border-indigo-200 bg-indigo-50 text-indigo-600 hover:bg-indigo-100 hover:border-indigo-300 transition-colors focus:outline-none focus:ring-2 focus:ring-indigo-500 disabled:opacity-50">
@@ -189,7 +212,7 @@
 
     {{-- Historial del dia (siempre disponible) --}}
     <button type="button"
-        wire:click="openRoomDailyHistory({{ $room->id }})"
+        wire:click="$parent.openRoomDailyHistory({{ $room->id }})"
         wire:loading.attr="disabled"
         title="Historial del dia"
         class="inline-flex items-center justify-center w-8 h-8 rounded-lg border border-gray-200 bg-white text-gray-600 hover:bg-gray-50 hover:border-gray-300 transition-colors focus:outline-none focus:ring-2 focus:ring-gray-500 disabled:opacity-50">

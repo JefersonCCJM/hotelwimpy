@@ -1,6 +1,7 @@
 @push('scripts')
 <script>
 const reservationPaymentRouteTemplate = '{{ route("reservations.register-payment", ":id") }}';
+const reservationCheckInRouteTemplate = '{{ route("reservations.check-in", ":id") }}';
 let reservationPaymentRequestInFlight = false;
 let reservationCancelPaymentRequestInFlight = false;
 const noShowAutoCancellationInProgress = new Set();
@@ -201,10 +202,11 @@ function openReservationDetail(data) {
     const downloadDocumentBtn = document.getElementById('modal-download-document-btn');
     const deleteBtn = document.getElementById('modal-delete-btn');
 
-    const canCheckIn = data.can_checkin !== false;
-    if (checkInBtn && data.check_in_url && canCheckIn) {
+    const checkInUrl = data.check_in_url || (data.id ? reservationCheckInRouteTemplate.replace(':id', String(data.id)) : null);
+    const canCheckIn = data.can_checkin !== false && data.has_operational_stay !== true;
+    if (checkInBtn && checkInUrl && canCheckIn) {
         checkInBtn.onclick = () => openCheckInConfirmModal(
-            data.check_in_url,
+            checkInUrl,
             reservationLabel,
             customerName,
             checkInBtn
@@ -597,43 +599,35 @@ async function openCheckInConfirmModal(url, reservationLabel = '', customerName 
 
     if (!result.isConfirmed) return;
 
-    try {
-        const response = await fetch(url, {
-            method: 'POST',
-            headers: {
-                'X-CSRF-TOKEN': document.querySelector('meta[name="csrf-token"]')?.getAttribute('content') || '',
-                'X-Requested-With': 'XMLHttpRequest',
-                'Accept': 'application/json',
-            },
-        });
-
-        let payload = null;
-        try { payload = await response.json(); } catch (e) {}
-
-        if (!response.ok || !payload || payload.ok !== true) {
-            throw new Error(payload?.message || 'No fue posible registrar el check-in.');
-        }
-
+    const csrfToken = document.querySelector('meta[name="csrf-token"]')?.getAttribute('content') || '';
+    if (!csrfToken) {
         await Swal.fire({
-            title: 'Llegada registrada',
-            text: 'Se actualizó la reserva correctamente.',
-            icon: 'success',
-            confirmButtonColor: '#10b981',
-            customClass: { popup: 'rounded-3xl' }
-        });
-
-        closeReservationDetail();
-        window.location.reload();
-    } catch (error) {
-        Swal.fire({
             title: 'Error al registrar',
-            text: error?.message || 'No fue posible registrar el check-in.',
+            text: 'No se encontró token de seguridad para registrar el check-in.',
             icon: 'error',
             confirmButtonColor: '#059669',
             customClass: { popup: 'rounded-3xl' }
         });
+        return;
     }
+
+    closeReservationDetail();
+
+    // Enviar POST tradicional para evitar bloqueos silenciosos en fetch
+    // (cookies/sesión/redirecciones intermedias de middleware).
+    const form = document.createElement('form');
+    form.method = 'POST';
+    form.action = url;
+    form.style.display = 'none';
+
+    const tokenInput = document.createElement('input');
+    tokenInput.type = 'hidden';
+    tokenInput.name = '_token';
+    tokenInput.value = csrfToken;
+    form.appendChild(tokenInput);
+
+    document.body.appendChild(form);
+    form.submit();
 }
 </script>
 @endpush
-
