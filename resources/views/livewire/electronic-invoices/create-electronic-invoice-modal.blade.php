@@ -200,14 +200,14 @@
                             <label class="block text-xs font-semibold text-gray-700 mb-2">
                                 Método de Pago <span class="text-red-500">*</span>
                             </label>
-                            <select wire:model="formData.payment_method_id"
+                            <select wire:model="formData.payment_method_code"
                                     class="block w-full px-3 py-2.5 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent">
                                 <option value="">Seleccione...</option>
                                 @foreach($paymentMethods as $method)
-                                    <option value="{{ $method['id'] }}">{{ $method['name'] }}</option>
+                                    <option value="{{ $method['code'] }}">{{ $method['name'] }} ({{ $method['code'] }})</option>
                                 @endforeach
                             </select>
-                            @error('formData.payment_method_id')
+                            @error('formData.payment_method_code')
                                 <p class="mt-1.5 text-xs text-red-600">{{ $message }}</p>
                             @enderror
                         </div>
@@ -217,14 +217,14 @@
                             <label class="block text-xs font-semibold text-gray-700 mb-2">
                                 Forma de Pago <span class="text-red-500">*</span>
                             </label>
-                            <select wire:model="formData.payment_form_id"
+                            <select wire:model="formData.payment_form_code"
                                     class="block w-full px-3 py-2.5 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent">
                                 <option value="">Seleccione...</option>
                                 @foreach($paymentForms as $form)
-                                    <option value="{{ $form['id'] }}">{{ $form['name'] }}</option>
+                                    <option value="{{ $form['code'] }}">{{ $form['name'] }} ({{ $form['code'] }})</option>
                                 @endforeach
                             </select>
-                            @error('formData.payment_form_id')
+                            @error('formData.payment_form_code')
                                 <p class="mt-1.5 text-xs text-red-600">{{ $message }}</p>
                             @enderror
                         </div>

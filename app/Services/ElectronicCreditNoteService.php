@@ -179,6 +179,8 @@ class ElectronicCreditNoteService
                 'document' => $updateData['document'] ?? $creditNote->document,
             ]);
         } catch (FactusApiException $exception) {
+            $this->persistFailedFactusCreditNoteAttempt($creditNote, $payload, $exception);
+
             Log::error('Error sending credit note to Factus API', [
                 'credit_note_id' => $creditNote->id,
                 'status_code' => $exception->getStatusCode(),
@@ -187,7 +189,9 @@ class ElectronicCreditNoteService
                 'payload' => $payload,
             ]);
 
-            throw new \Exception('Error al enviar la nota credito a Factus: ' . $exception->getMessage());
+            throw new \Exception(
+                'Error al enviar la nota credito a Factus: ' . $this->buildFactusErrorMessage($exception)
+            );
         } catch (\Exception $exception) {
             Log::error('Unexpected error sending credit note to Factus', [
                 'credit_note_id' => $creditNote->id,
@@ -221,7 +225,7 @@ class ElectronicCreditNoteService
                     'unit_measure_id' => (int) ($item->unit_measure_id ?: self::DEFAULT_UNIT_MEASURE_ID),
                     'standard_code_id' => (int) ($item->standard_code_id ?: self::DEFAULT_STANDARD_CODE_ID),
                     'is_excluded' => $item->is_excluded ? 1 : 0,
-                    'tribute_id' => self::DEFAULT_TRIBUTE_ID,
+                    'tribute_id' => (int) ($item->tribute_id ?: self::DEFAULT_TRIBUTE_ID),
                     'withholding_taxes' => [],
                 ];
             })->values()->toArray(),
@@ -471,5 +475,80 @@ class ElectronicCreditNoteService
         } catch (\Throwable) {
             return null;
         }
+    }
+
+    private function persistFailedFactusCreditNoteAttempt(
+        ElectronicCreditNote $creditNote,
+        array $payload,
+        FactusApiException $exception
+    ): void {
+        $responseDian = $exception->getResponseBody();
+
+        if (!is_array($responseDian)) {
+            $responseDian = [
+                'message' => $exception->getMessage(),
+            ];
+        }
+
+        $creditNote->update([
+            'status' => $exception->getStatusCode() === 422 ? 'rejected' : 'pending',
+            'payload_sent' => $payload,
+            'response_dian' => $responseDian,
+        ]);
+    }
+
+    private function buildFactusErrorMessage(FactusApiException $exception): string
+    {
+        $message = "Error en Factus API ({$exception->getStatusCode()}): {$exception->getMessage()}";
+        $errorMessages = $this->extractFactusErrorMessages($exception->getResponseBody());
+
+        if ($errorMessages !== []) {
+            $message .= ' | Detalle: ' . implode(' | ', $errorMessages);
+        }
+
+        return $message;
+    }
+
+    /**
+     * @param mixed $responseBody
+     * @return array<int, string>
+     */
+    private function extractFactusErrorMessages(mixed $responseBody): array
+    {
+        if (!is_array($responseBody)) {
+            return [];
+        }
+
+        $errors = data_get($responseBody, 'data.errors');
+
+        if (!is_array($errors)) {
+            return [];
+        }
+
+        $messages = [];
+
+        foreach ($errors as $key => $value) {
+            if (is_string($value) && trim($value) !== '') {
+                $messages[] = trim($value);
+
+                continue;
+            }
+
+            if (is_array($value)) {
+                foreach ($value as $nestedValue) {
+                    if (is_string($nestedValue) && trim($nestedValue) !== '') {
+                        $messages[] = trim($nestedValue);
+                    }
+                }
+
+                continue;
+            }
+
+            if (is_string($key) && trim($key) !== '') {
+                $messages[] = trim($key);
+            }
+        }
+
+        return array_values(array_unique($messages));
     }
 }

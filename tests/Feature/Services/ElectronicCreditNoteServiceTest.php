@@ -2,6 +2,7 @@
 
 namespace Tests\Feature\Services;
 
+use App\Exceptions\FactusApiException;
 use App\Models\Customer;
 use App\Models\CustomerTaxProfile;
 use App\Models\DianIdentificationDocument;
@@ -9,6 +10,7 @@ use App\Models\DianLegalOrganization;
 use App\Models\DianMeasurementUnit;
 use App\Models\DianMunicipality;
 use App\Models\DianPaymentMethod;
+use App\Models\ElectronicCreditNote;
 use App\Models\ElectronicInvoice;
 use App\Models\ElectronicInvoiceItem;
 use App\Models\FactusNumberingRange;
@@ -37,109 +39,14 @@ class ElectronicCreditNoteServiceTest extends TestCase
     #[Test]
     public function it_creates_and_validates_a_credit_note_using_the_referenced_factus_bill_id(): void
     {
-        $municipality = DianMunicipality::create([
-            'factus_id' => 980,
-            'code' => '68001',
-            'name' => 'San Gil',
-            'department' => 'Santander',
-        ]);
-
-        $identificationDocument = DianIdentificationDocument::create([
-            'code' => 'CC',
-            'name' => 'Cedula de ciudadania',
-            'requires_dv' => false,
-        ]);
-
-        $legalOrganization = DianLegalOrganization::create([
-            'code' => '2',
-            'name' => 'Persona Natural',
-        ]);
-
-        $customer = Customer::create([
-            'name' => 'Alan Turing',
-            'email' => 'alan@example.com',
-            'phone' => '3001234567',
-            'address' => 'Calle 123',
-            'requires_electronic_invoice' => true,
-            'is_active' => true,
-        ]);
-
-        CustomerTaxProfile::create([
-            'customer_id' => $customer->id,
-            'identification_document_id' => $identificationDocument->id,
-            'identification' => '123456789',
-            'legal_organization_id' => $legalOrganization->id,
-            'tribute_id' => 18,
-            'municipality_id' => $municipality->factus_id,
-            'names' => 'Alan Turing',
-        ]);
-
-        DianPaymentMethod::create([
-            'code' => '10',
-            'name' => 'Efectivo',
-        ]);
-
-        $invoiceRange = FactusNumberingRange::create([
-            'factus_id' => 1274,
-            'document' => 'Factura de Venta',
-            'prefix' => 'SETP',
-            'range_from' => 990000000,
-            'range_to' => 995000000,
-            'current' => 990000001,
-            'start_date' => now()->subDay(),
-            'end_date' => now()->addYear(),
-            'is_expired' => false,
-            'is_active' => true,
-        ]);
-
-        $creditNoteRange = FactusNumberingRange::create([
-            'factus_id' => 1275,
-            'document' => 'Nota Crédito',
-            'prefix' => 'NC',
-            'range_from' => 1,
-            'range_to' => 999999,
-            'current' => 76,
-            'start_date' => now()->subDay(),
-            'end_date' => now()->addYear(),
-            'is_expired' => false,
-            'is_active' => true,
-        ]);
-
-        $invoice = ElectronicInvoice::create([
-            'customer_id' => $customer->id,
-            'factus_numbering_range_id' => $invoiceRange->factus_id,
-            'factus_bill_id' => 514,
-            'document_type_id' => 1,
-            'operation_type_id' => 1,
-            'payment_method_code' => '10',
-            'payment_form_code' => '1',
-            'reference_code' => 'INV-001',
-            'document' => 'SETP990000302',
-            'status' => 'accepted',
-            'cufe' => 'CUFE-123456',
-            'gross_value' => 100000,
-            'tax_amount' => 19000,
-            'discount_amount' => 0,
-            'surcharge_amount' => 0,
-            'total' => 119000,
-            'response_dian' => [],
-        ]);
-
-        ElectronicInvoiceItem::create([
-            'electronic_invoice_id' => $invoice->id,
-            'tribute_id' => 18,
-            'standard_code_id' => 1,
-            'unit_measure_id' => 70,
-            'code_reference' => 'HSP-001',
-            'name' => 'Hospedaje una noche',
-            'quantity' => 1,
-            'price' => 100000,
-            'tax_rate' => 19,
-            'tax_amount' => 19000,
-            'discount_rate' => 0,
-            'is_excluded' => false,
-            'total' => 119000,
-        ]);
+        [$invoice, $creditNoteRange] = $this->createAcceptedInvoiceFixture(
+            customerName: 'Alan Turing',
+            invoiceReference: 'INV-001',
+            invoiceDocument: 'SETP990000302',
+            invoiceCufe: 'CUFE-123456',
+            itemCodeReference: 'HSP-001',
+            itemName: 'Hospedaje una noche'
+        );
 
         $capturedPayload = null;
 
@@ -176,7 +83,7 @@ class ElectronicCreditNoteServiceTest extends TestCase
             'numbering_range_id' => $creditNoteRange->id,
             'correction_concept_code' => 2,
             'payment_method_code' => '10',
-            'notes' => 'Anulación total de la factura',
+            'notes' => 'Anulacion total de la factura',
             'send_email' => true,
             'items' => [
                 [
@@ -206,7 +113,203 @@ class ElectronicCreditNoteServiceTest extends TestCase
         $this->assertSame(20, $capturedPayload['customization_id']);
         $this->assertSame(514, $capturedPayload['bill_id']);
         $this->assertSame('10', $capturedPayload['payment_method_code']);
-        $this->assertSame('Anulación total de la factura', $capturedPayload['observation']);
+        $this->assertSame('Anulacion total de la factura', $capturedPayload['observation']);
+        $this->assertSame(18, $capturedPayload['items'][0]['tribute_id']);
+    }
+
+    #[Test]
+    public function it_persists_factus_validation_errors_and_exposes_the_detail_to_the_user(): void
+    {
+        [$invoice, $creditNoteRange] = $this->createAcceptedInvoiceFixture(
+            customerName: 'Grace Hopper',
+            invoiceReference: 'INV-002',
+            invoiceDocument: 'SETP990000303',
+            invoiceCufe: 'CUFE-654321',
+            itemCodeReference: 'HSP-002',
+            itemName: 'Hospedaje dos noches'
+        );
+
+        $factusApi = Mockery::mock(FactusApiService::class);
+        $factusApi->shouldReceive('post')
+            ->once()
+            ->with('/v1/credit-notes/validate', Mockery::type('array'))
+            ->andThrow(new FactusApiException(
+                'Error de validacion',
+                422,
+                [
+                    'message' => 'Validation failed.',
+                    'data' => [
+                        'errors' => [
+                            'bill_id' => [
+                                'La factura referenciada es obligatoria.',
+                            ],
+                            'customer' => [
+                                'El cliente no es valido.',
+                            ],
+                        ],
+                    ],
+                ]
+            ));
+
+        $service = new ElectronicCreditNoteService($factusApi);
+
+        try {
+            $service->createFromInvoice($invoice, [
+                'numbering_range_id' => $creditNoteRange->id,
+                'correction_concept_code' => 2,
+                'payment_method_code' => '10',
+                'notes' => 'Anulacion total de la factura',
+                'send_email' => true,
+                'items' => [
+                    [
+                        'code_reference' => 'HSP-002',
+                        'name' => 'Hospedaje dos noches',
+                        'quantity' => 1,
+                        'price' => 100000,
+                        'tax_rate' => 19,
+                        'unit_measure_id' => 70,
+                        'standard_code_id' => 1,
+                        'tribute_id' => 18,
+                        'is_excluded' => false,
+                    ],
+                ],
+            ]);
+
+            $this->fail('Expected credit note creation to fail.');
+        } catch (\Exception $exception) {
+            $this->assertStringContainsString('Error en Factus API (422): Error de validacion', $exception->getMessage());
+            $this->assertStringContainsString('La factura referenciada es obligatoria.', $exception->getMessage());
+            $this->assertStringContainsString('El cliente no es valido.', $exception->getMessage());
+        }
+
+        $storedCreditNote = ElectronicCreditNote::query()->latest('id')->firstOrFail();
+
+        $this->assertSame('rejected', $storedCreditNote->status);
+        $this->assertSame(
+            ['La factura referenciada es obligatoria.'],
+            data_get($storedCreditNote->response_dian, 'data.errors.bill_id')
+        );
+        $this->assertSame(['El cliente no es valido.'], data_get($storedCreditNote->response_dian, 'data.errors.customer'));
+        $this->assertSame(18, data_get($storedCreditNote->payload_sent, 'items.0.tribute_id'));
+    }
+
+    /**
+     * @return array{0: ElectronicInvoice, 1: FactusNumberingRange}
+     */
+    private function createAcceptedInvoiceFixture(
+        string $customerName,
+        string $invoiceReference,
+        string $invoiceDocument,
+        string $invoiceCufe,
+        string $itemCodeReference,
+        string $itemName
+    ): array {
+        $municipality = DianMunicipality::create([
+            'factus_id' => 980,
+            'code' => '68001',
+            'name' => 'San Gil',
+            'department' => 'Santander',
+        ]);
+
+        $identificationDocument = DianIdentificationDocument::create([
+            'code' => 'CC',
+            'name' => 'Cedula de ciudadania',
+            'requires_dv' => false,
+        ]);
+
+        $legalOrganization = DianLegalOrganization::create([
+            'code' => '2',
+            'name' => 'Persona Natural',
+        ]);
+
+        $customer = Customer::create([
+            'name' => $customerName,
+            'email' => strtolower(str_replace(' ', '.', $customerName)) . '@example.com',
+            'phone' => '3001234567',
+            'address' => 'Calle 123',
+            'requires_electronic_invoice' => true,
+            'is_active' => true,
+        ]);
+
+        CustomerTaxProfile::create([
+            'customer_id' => $customer->id,
+            'identification_document_id' => $identificationDocument->id,
+            'identification' => $invoiceReference === 'INV-001' ? '123456789' : '987654321',
+            'legal_organization_id' => $legalOrganization->id,
+            'tribute_id' => 18,
+            'municipality_id' => $municipality->factus_id,
+            'names' => $customerName,
+        ]);
+
+        DianPaymentMethod::firstOrCreate([
+            'code' => '10',
+        ], [
+            'name' => 'Efectivo',
+        ]);
+
+        $invoiceRange = FactusNumberingRange::create([
+            'factus_id' => $invoiceReference === 'INV-001' ? 1274 : 2274,
+            'document' => 'Factura de Venta',
+            'prefix' => 'SETP',
+            'range_from' => 990000000,
+            'range_to' => 995000000,
+            'current' => 990000001,
+            'start_date' => now()->subDay(),
+            'end_date' => now()->addYear(),
+            'is_expired' => false,
+            'is_active' => true,
+        ]);
+
+        $creditNoteRange = FactusNumberingRange::create([
+            'factus_id' => $invoiceReference === 'INV-001' ? 1275 : 2275,
+            'document' => "Nota Cr\xC3\xA9dito",
+            'prefix' => 'NC',
+            'range_from' => 1,
+            'range_to' => 999999,
+            'current' => 76,
+            'start_date' => now()->subDay(),
+            'end_date' => now()->addYear(),
+            'is_expired' => false,
+            'is_active' => true,
+        ]);
+
+        $invoice = ElectronicInvoice::create([
+            'customer_id' => $customer->id,
+            'factus_numbering_range_id' => $invoiceRange->factus_id,
+            'factus_bill_id' => 514,
+            'document_type_id' => 1,
+            'operation_type_id' => 1,
+            'payment_method_code' => '10',
+            'payment_form_code' => '1',
+            'reference_code' => $invoiceReference,
+            'document' => $invoiceDocument,
+            'status' => 'accepted',
+            'cufe' => $invoiceCufe,
+            'gross_value' => 100000,
+            'tax_amount' => 19000,
+            'discount_amount' => 0,
+            'surcharge_amount' => 0,
+            'total' => 119000,
+            'response_dian' => [],
+        ]);
+
+        ElectronicInvoiceItem::create([
+            'electronic_invoice_id' => $invoice->id,
+            'tribute_id' => 18,
+            'standard_code_id' => 1,
+            'unit_measure_id' => 70,
+            'code_reference' => $itemCodeReference,
+            'name' => $itemName,
+            'quantity' => 1,
+            'price' => 100000,
+            'tax_rate' => 19,
+            'tax_amount' => 19000,
+            'discount_rate' => 0,
+            'is_excluded' => false,
+            'total' => 119000,
+        ]);
+
+        return [$invoice, $creditNoteRange];
     }
 
     private function seedCatalogs(): void
