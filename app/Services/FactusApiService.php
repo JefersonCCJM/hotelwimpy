@@ -289,6 +289,25 @@ class FactusApiService
     }
 
     /**
+     * Descarga el PDF de una nota crédito desde Factus
+     *
+     * @param string $number Número de la nota crédito (ej: NC76)
+     * @return array Respuesta con file_name y pdf_base_64_encoded
+     * @throws \Exception Si falla la petición
+     */
+    public function downloadCreditNotePdf(string $number): array
+    {
+        $endpoint = "/v1/credit-notes/download-pdf/{$number}";
+        $response = $this->get($endpoint);
+
+        if (!isset($response['data'])) {
+            throw new \Exception('Respuesta inválida de Factus API al descargar PDF de nota crédito');
+        }
+
+        return $response['data'];
+    }
+
+    /**
      * Elimina una factura no validada usando el código de referencia
      * 
      * @param string $referenceCode Código de referencia de la factura

@@ -20,6 +20,8 @@ use Illuminate\Support\Facades\Log;
 
 class ElectronicInvoiceService
 {
+    private const FACTUS_OBSERVATION_MAX_LENGTH = 250;
+
     public function __construct(
         private FactusApiService $apiService,
         private FactusNumberingRangeService $numberingRangeService
@@ -44,7 +46,7 @@ class ElectronicInvoiceService
         DB::beginTransaction();
         
         try {
-            $notes = $this->normalizeInvoiceNotes($data['notes'] ?? null);
+            $normalizedNotes = $this->normalizeObservation($data['notes'] ?? null);
             $customer = Customer::with('taxProfile')->findOrFail($data['customer_id']);
             
             // Agregar logs detallados para depurar el perfil fiscal
@@ -105,6 +107,8 @@ class ElectronicInvoiceService
                 
                 throw new \Exception('El cliente no tiene perfil fiscal completo. Campos faltantes: ' . implode(', ', $missingFields));
             }
+
+            $this->validateCustomerTaxProfileForFactus($customer);
             
             // Get document type code
             $documentType = DianDocumentType::findOrFail($data['document_type_id']);
@@ -133,7 +137,7 @@ class ElectronicInvoiceService
                 'payment_form_code' => $data['payment_form_code'],
                 'reference_code' => $data['reference_code'] ?? $this->generateReferenceCode(),
                 'document' => $this->generateDocumentNumber($numberingRange),
-                'notes' => $notes,
+                'notes' => $normalizedNotes,
                 'status' => 'pending',
                 'gross_value' => $data['totals']['subtotal'],
                 'tax_amount' => $data['totals']['tax'],
@@ -172,7 +176,7 @@ class ElectronicInvoiceService
             
             // Ahora intentar enviar a Factus API (fuera de la transacción)
             try {
-                $this->sendToFactus($invoice);
+                $this->sendToFactusWithRecovery($invoice);
             } catch (\Exception $e) {
                 // Si falla el envío a Factus, la factura ya está guardada como 'pending'
                 Log::warning('Error sending invoice to Factus, keeping as pending:', [
@@ -242,6 +246,10 @@ class ElectronicInvoiceService
                 'payload_sent' => $payload,
                 'response_dian' => $response,
             ];
+
+            if (isset($response['data']['bill']['id']) && !empty($response['data']['bill']['id'])) {
+                $updateData['factus_bill_id'] = (int) $response['data']['bill']['id'];
+            }
             
             // Actualizar campos según la respuesta de la API
             if (isset($response['data']['bill']['cufe']) && !empty($response['data']['bill']['cufe'])) {
@@ -306,6 +314,277 @@ class ElectronicInvoiceService
                 'payload' => $payload,
             ]);
             throw new \Exception('Error al enviar la factura a Factus: ' . $e->getMessage());
+        }
+    }
+
+    private function sendToFactusWithRecovery(ElectronicInvoice $invoice): void
+    {
+        $company = CompanyTaxSetting::first();
+        if (!$company) {
+            throw new \Exception('La configuracion fiscal de la empresa no esta completa.');
+        }
+
+        $payload = $this->buildPayload($invoice, $company);
+
+        Log::info('Payload enviado a Factus API:', [
+            'payload' => $payload,
+            'invoice_id' => $invoice->id,
+            'document_number' => $invoice->document,
+            'flow' => 'sendToFactusWithRecovery',
+        ]);
+
+        try {
+            $response = $this->apiService->post('/v1/bills/validate', $payload);
+
+            Log::info('Respuesta de Factus API:', [
+                'response' => $response,
+                'invoice_id' => $invoice->id,
+                'flow' => 'sendToFactusWithRecovery',
+            ]);
+
+            $this->applySuccessfulFactusInvoiceResponse($invoice, $payload, $response);
+        } catch (FactusApiException $exception) {
+            $cleanupContext = null;
+
+            Log::error('Error sending invoice to Factus API', [
+                'invoice_id' => $invoice->id,
+                'status_code' => $exception->getStatusCode(),
+                'error_message' => $exception->getMessage(),
+                'error_data' => $exception->getResponseBody(),
+                'payload' => $payload,
+                'flow' => 'sendToFactusWithRecovery',
+            ]);
+
+            if ($this->isPendingInvoiceConflict($exception)) {
+                $cleanupContext = $this->cleanupBlockingPendingInvoicesForRange($invoice);
+
+                if (!empty($cleanupContext['deleted_reference_codes'])) {
+                    try {
+                        $response = $this->apiService->post('/v1/bills/validate', $payload);
+
+                        Log::info('Respuesta de Factus API tras reintento', [
+                            'response' => $response,
+                            'invoice_id' => $invoice->id,
+                            'cleanup_context' => $cleanupContext,
+                        ]);
+
+                        $this->applySuccessfulFactusInvoiceResponse($invoice, $payload, $response);
+
+                        return;
+                    } catch (FactusApiException $retryException) {
+                        $exception = $retryException;
+                    }
+                }
+            }
+
+            if ($exception->getStatusCode() === 422) {
+                $cleanupContext = array_merge(
+                    $cleanupContext ?? [],
+                    $this->cleanupCurrentFactusReferenceAfterValidationError($invoice)
+                );
+            }
+
+            $this->persistFailedFactusInvoiceAttempt($invoice, $payload, $exception, $cleanupContext);
+
+            $detailedError = "Error en Factus API ({$exception->getStatusCode()}): {$exception->getMessage()}";
+            $errorData = $exception->getResponseBody();
+            if (is_array($errorData) && isset($errorData['data']['errors'])) {
+                $detailedError .= ' | Errores: ' . json_encode($errorData['data']['errors']);
+            }
+
+            if (!empty($cleanupContext['deleted_reference_codes'])) {
+                $detailedError .= ' | Limpieza automatica: ' . implode(', ', $cleanupContext['deleted_reference_codes']);
+            } elseif (!empty($cleanupContext['current_reference_cleanup']['success'])) {
+                $detailedError .= ' | Factus dejo un pendiente oculto y fue limpiado automaticamente.';
+            }
+
+            throw new \Exception('Error al enviar la factura a Factus: ' . $detailedError);
+        } catch (\Exception $exception) {
+            Log::error('Error sending invoice to Factus', [
+                'invoice_id' => $invoice->id,
+                'error' => $exception->getMessage(),
+                'payload' => $payload,
+                'flow' => 'sendToFactusWithRecovery',
+            ]);
+
+            throw new \Exception('Error al enviar la factura a Factus: ' . $exception->getMessage());
+        }
+    }
+
+    private function applySuccessfulFactusInvoiceResponse(ElectronicInvoice $invoice, array $payload, array $response): void
+    {
+        $status = $this->mapStatusFromResponse($response);
+
+        $updateData = [
+            'status' => $status,
+            'payload_sent' => $payload,
+            'response_dian' => $response,
+        ];
+
+        if (isset($response['data']['bill']['id']) && !empty($response['data']['bill']['id'])) {
+            $updateData['factus_bill_id'] = (int) $response['data']['bill']['id'];
+        }
+
+        if (isset($response['data']['bill']['cufe']) && !empty($response['data']['bill']['cufe'])) {
+            $updateData['cufe'] = $response['data']['bill']['cufe'];
+        }
+
+        if (isset($response['data']['bill']['qr']) && !empty($response['data']['bill']['qr'])) {
+            $updateData['qr'] = $response['data']['bill']['qr'];
+        }
+
+        if (isset($response['data']['bill']['number']) && !empty($response['data']['bill']['number'])) {
+            $updateData['document'] = $response['data']['bill']['number'];
+        }
+
+        if (isset($response['data']['bill']['pdf_url']) && !empty($response['data']['bill']['pdf_url'])) {
+            $updateData['pdf_url'] = $response['data']['bill']['pdf_url'];
+        }
+
+        if (isset($response['data']['bill']['xml_url']) && !empty($response['data']['bill']['xml_url'])) {
+            $updateData['xml_url'] = $response['data']['bill']['xml_url'];
+        }
+
+        if (isset($response['data']['bill']['validated_at']) && !empty($response['data']['bill']['validated_at'])) {
+            $updateData['validated_at'] = $response['data']['bill']['validated_at'];
+        }
+
+        $invoice->update($updateData);
+
+        Log::info('Factura enviada exitosamente a Factus', [
+            'invoice_id' => $invoice->id,
+            'document' => $updateData['document'] ?? null,
+            'status' => $status,
+            'response' => $response,
+            'flow' => 'sendToFactusWithRecovery',
+        ]);
+    }
+
+    private function persistFailedFactusInvoiceAttempt(
+        ElectronicInvoice $invoice,
+        array $payload,
+        FactusApiException $exception,
+        ?array $cleanupContext = null
+    ): void {
+        $responseDian = $exception->getResponseBody();
+        if (!is_array($responseDian)) {
+            $responseDian = [
+                'message' => $exception->getMessage(),
+            ];
+        }
+
+        if ($cleanupContext !== null && $cleanupContext !== []) {
+            $responseDian['_cleanup'] = $cleanupContext;
+        }
+
+        $invoice->update([
+            'status' => $exception->getStatusCode() === 422 ? 'rejected' : 'pending',
+            'payload_sent' => $payload,
+            'response_dian' => $responseDian,
+        ]);
+    }
+
+    private function isPendingInvoiceConflict(FactusApiException $exception): bool
+    {
+        return $exception->getStatusCode() === 409
+            && str_contains(mb_strtolower($exception->getMessage()), 'factura pendiente por enviar a la dian');
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    private function cleanupBlockingPendingInvoicesForRange(ElectronicInvoice $invoice): array
+    {
+        $candidates = ElectronicInvoice::query()
+            ->where('id', '!=', $invoice->id)
+            ->where('factus_numbering_range_id', $invoice->factus_numbering_range_id)
+            ->whereIn('status', ['pending', 'rejected'])
+            ->whereNotNull('reference_code')
+            ->orderByDesc('id')
+            ->limit(10)
+            ->get();
+
+        $attemptedReferenceCodes = [];
+        $deletedReferenceCodes = [];
+
+        foreach ($candidates as $candidate) {
+            $attemptedReferenceCodes[] = $candidate->reference_code;
+
+            try {
+                $response = $this->apiService->deleteBillByReference($candidate->reference_code);
+
+                $candidate->update([
+                    'status' => 'cancelled',
+                    'response_dian' => array_merge($candidate->response_dian ?? [], [
+                        'auto_cleanup_at' => now()->toISOString(),
+                        'auto_cleanup_response' => $response,
+                    ]),
+                ]);
+
+                $deletedReferenceCodes[] = $candidate->reference_code;
+            } catch (FactusApiException $cleanupException) {
+                if ($cleanupException->getStatusCode() === 404) {
+                    $candidate->update([
+                        'status' => 'cancelled',
+                        'response_dian' => array_merge($candidate->response_dian ?? [], [
+                            'auto_cleanup_at' => now()->toISOString(),
+                            'auto_cleanup_response' => $cleanupException->getResponseBody(),
+                            'auto_cleanup_reason' => 'not_found_in_factus',
+                        ]),
+                    ]);
+                }
+            } catch (\Throwable $cleanupException) {
+                Log::warning('No se pudo limpiar factura bloqueante en Factus', [
+                    'invoice_id' => $candidate->id,
+                    'reference_code' => $candidate->reference_code,
+                    'error' => $cleanupException->getMessage(),
+                ]);
+            }
+        }
+
+        return [
+            'attempted_reference_codes' => $attemptedReferenceCodes,
+            'deleted_reference_codes' => $deletedReferenceCodes,
+        ];
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    private function cleanupCurrentFactusReferenceAfterValidationError(ElectronicInvoice $invoice): array
+    {
+        if (empty($invoice->reference_code)) {
+            return [];
+        }
+
+        try {
+            $response = $this->apiService->deleteBillByReference($invoice->reference_code);
+
+            return [
+                'current_reference_cleanup' => [
+                    'success' => true,
+                    'reference_code' => $invoice->reference_code,
+                    'response' => $response,
+                ],
+            ];
+        } catch (FactusApiException $cleanupException) {
+            return [
+                'current_reference_cleanup' => [
+                    'success' => false,
+                    'reference_code' => $invoice->reference_code,
+                    'status_code' => $cleanupException->getStatusCode(),
+                    'response' => $cleanupException->getResponseBody(),
+                    'message' => $cleanupException->getMessage(),
+                ],
+            ];
+        } catch (\Throwable $cleanupException) {
+            return [
+                'current_reference_cleanup' => [
+                    'success' => false,
+                    'reference_code' => $invoice->reference_code,
+                    'message' => $cleanupException->getMessage(),
+                ],
+            ];
         }
     }
 
@@ -538,7 +817,7 @@ class ElectronicInvoiceService
             'items' => $items,
         ];
 
-        $observation = $this->normalizeInvoiceNotes($invoice->notes);
+        $observation = $this->normalizeObservation($invoice->notes);
         if ($observation !== null) {
             $payload['observation'] = $observation;
         }
@@ -785,6 +1064,33 @@ class ElectronicInvoiceService
     /**
      * Calcular dígito de verificación para NIT colombiano
      */
+    private function validateCustomerTaxProfileForFactus(Customer $customer): void
+    {
+        $taxProfile = $customer->taxProfile;
+        $identificationDocument = $taxProfile?->identificationDocument;
+
+        if (!$taxProfile || !$identificationDocument) {
+            throw new \Exception('El cliente no tiene perfil fiscal listo para Factus.');
+        }
+
+        if ($identificationDocument->code !== 'NIT') {
+            return;
+        }
+
+        $expectedDv = $this->calculateDV($taxProfile->identification);
+        $currentDv = $taxProfile->dv !== null ? (int) $taxProfile->dv : null;
+
+        if ($currentDv === null) {
+            throw new \Exception('El cliente tiene tipo de documento NIT pero no tiene DV configurado.');
+        }
+
+        if ($currentDv !== $expectedDv) {
+            throw new \Exception(
+                "El DV configurado para el NIT {$taxProfile->identification} es incorrecto. Factus espera {$expectedDv} y el perfil del cliente tiene {$currentDv}. Si este cliente no usa NIT, cambia el tipo de documento a cédula."
+            );
+        }
+    }
+
     private function calculateDV($nit): int
     {
         // Eliminar espacios y caracteres no numéricos
@@ -817,5 +1123,16 @@ class ElectronicInvoiceService
         } else {
             return 11 - $mod;
         }
+    }
+
+    private function normalizeObservation(?string $observation): ?string
+    {
+        $normalized = trim((string) ($observation ?? ''));
+
+        if ($normalized === '') {
+            return null;
+        }
+
+        return mb_substr($normalized, 0, self::FACTUS_OBSERVATION_MAX_LENGTH);
     }
 }

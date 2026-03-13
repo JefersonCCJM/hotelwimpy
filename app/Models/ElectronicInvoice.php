@@ -7,7 +7,7 @@ use Illuminate\Database\Eloquent\Model;
 class ElectronicInvoice extends Model
 {
     protected $fillable = [
-        'customer_id', 'factus_numbering_range_id',
+        'customer_id', 'factus_numbering_range_id', 'factus_bill_id',
         'document_type_id', 'operation_type_id',
         'payment_method_code', 'payment_form_code',
         'reference_code', 'document', 'notes', 'status',
@@ -20,6 +20,7 @@ class ElectronicInvoice extends Model
     ];
 
     protected $casts = [
+        'factus_bill_id' => 'integer',
         'total' => 'decimal:2',
         'tax_amount' => 'decimal:2',
         'gross_value' => 'decimal:2',
@@ -76,6 +77,11 @@ class ElectronicInvoice extends Model
         return $this->hasMany(ElectronicInvoiceItem::class);
     }
 
+    public function creditNotes()
+    {
+        return $this->hasMany(ElectronicCreditNote::class)->latest();
+    }
+
     public function scopePending($query)
     {
         return $query->where('status', 'pending');
@@ -115,6 +121,11 @@ class ElectronicInvoice extends Model
     public function isPending(): bool
     {
         return $this->status === 'pending';
+    }
+
+    public function canGenerateCreditNote(): bool
+    {
+        return $this->isAccepted() && !$this->isDeleted();
     }
 
     public function isDeleted(): bool

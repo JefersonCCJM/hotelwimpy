@@ -294,6 +294,14 @@ Route::middleware('auth')->group(function () {
                     ->name('electronic-invoices.store');
                 Route::get('/electronic-invoices/{electronicInvoice}', [\App\Http\Controllers\ElectronicInvoiceController::class , 'show'])
                     ->name('electronic-invoices.show');
+                Route::get('/electronic-invoices/{electronicInvoice}/credit-notes/create', [\App\Http\Controllers\ElectronicCreditNoteController::class, 'create'])
+                    ->name('electronic-credit-notes.create');
+                Route::post('/electronic-invoices/{electronicInvoice}/credit-notes', [\App\Http\Controllers\ElectronicCreditNoteController::class, 'store'])
+                    ->name('electronic-credit-notes.store');
+                Route::get('/electronic-credit-notes/{electronicCreditNote}', [\App\Http\Controllers\ElectronicCreditNoteController::class, 'show'])
+                    ->name('electronic-credit-notes.show');
+                Route::get('/electronic-credit-notes/{electronicCreditNote}/download-pdf', [\App\Http\Controllers\ElectronicCreditNoteController::class, 'downloadPdf'])
+                    ->name('electronic-credit-notes.download-pdf');
                 Route::post('/electronic-invoices/{electronicInvoice}/refresh-status', [\App\Http\Controllers\ElectronicInvoiceController::class , 'refreshStatus'])
                     ->name('electronic-invoices.refresh-status');
                 Route::get('/electronic-invoices/{electronicInvoice}/download-pdf', [\App\Http\Controllers\ElectronicInvoiceController::class , 'downloadPdf'])

@@ -122,6 +122,14 @@
                     </form>
                 @endif
 
+                @if($electronicInvoice->canGenerateCreditNote())
+                    <a href="{{ route('electronic-credit-notes.create', $electronicInvoice) }}"
+                       class="inline-flex items-center justify-center px-4 sm:px-5 py-2.5 rounded-xl border-2 border-amber-500 bg-amber-500 text-white text-sm font-semibold hover:bg-amber-600 hover:border-amber-600 transition-all duration-200 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-amber-500 shadow-sm hover:shadow-md">
+                        <i class="fas fa-receipt mr-2"></i>
+                        <span>Nota Crédito</span>
+                    </a>
+                @endif
+
                 <a href="{{ $returnUrl ?? route('electronic-invoices.index') }}"
                    class="inline-flex items-center justify-center px-4 sm:px-5 py-2.5 rounded-xl border-2 border-emerald-600 bg-emerald-600 text-white text-sm font-semibold hover:bg-emerald-700 hover:border-emerald-700 transition-all duration-200 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-emerald-500 shadow-sm hover:shadow-md">
                     <i class="fas fa-arrow-left mr-2"></i>
@@ -229,6 +237,75 @@
                     </div>
                     @endif
                 </div>
+            </div>
+
+            <div class="bg-white rounded-xl border border-gray-100 p-4 sm:p-6">
+                <div class="flex items-center justify-between gap-3 mb-5">
+                    <div class="flex items-center space-x-3">
+                        <div class="p-2.5 rounded-xl bg-amber-50 text-amber-600">
+                            <i class="fas fa-receipt text-lg"></i>
+                        </div>
+                        <div>
+                            <h2 class="text-lg sm:text-xl font-bold text-gray-900">Notas Crédito Asociadas</h2>
+                            <p class="text-xs sm:text-sm text-gray-500">{{ $electronicInvoice->creditNotes->count() }} registradas</p>
+                        </div>
+                    </div>
+
+                    @if($electronicInvoice->canGenerateCreditNote())
+                        <a href="{{ route('electronic-credit-notes.create', $electronicInvoice) }}"
+                           class="inline-flex items-center justify-center px-4 py-2 rounded-xl border-2 border-amber-500 bg-amber-500 text-white text-sm font-semibold hover:bg-amber-600 hover:border-amber-600">
+                            <i class="fas fa-plus mr-2"></i>
+                            Crear Nota
+                        </a>
+                    @endif
+                </div>
+
+                @if($electronicInvoice->creditNotes->isEmpty())
+                    <div class="rounded-xl border border-dashed border-gray-300 bg-gray-50 px-4 py-6 text-sm text-gray-600">
+                        Esta factura todavía no tiene notas crédito asociadas.
+                    </div>
+                @else
+                    <div class="space-y-3">
+                        @foreach($electronicInvoice->creditNotes as $creditNote)
+                            <div class="rounded-xl border border-gray-200 px-4 py-3 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+                                <div>
+                                    <p class="text-sm font-semibold text-gray-900">
+                                        <a href="{{ route('electronic-credit-notes.show', $creditNote) }}" class="text-blue-600 hover:text-blue-800">
+                                            {{ $creditNote->document }}
+                                        </a>
+                                    </p>
+                                    <p class="text-xs text-gray-500 mt-1">
+                                        Ref. {{ $creditNote->reference_code }} · Código {{ $creditNote->correction_concept_code }}
+                                    </p>
+                                    <div class="mt-2 flex flex-wrap gap-2">
+                                        <a href="{{ route('electronic-credit-notes.show', $creditNote) }}"
+                                           class="inline-flex items-center px-2.5 py-1 rounded-lg bg-gray-100 text-gray-700 text-xs font-semibold hover:bg-gray-200">
+                                            Ver detalle
+                                        </a>
+                                        <a href="{{ route('electronic-credit-notes.download-pdf', $creditNote) }}"
+                                           class="inline-flex items-center px-2.5 py-1 rounded-lg bg-red-50 text-red-700 text-xs font-semibold hover:bg-red-100">
+                                            PDF
+                                        </a>
+                                        @if($creditNote->dian_verification_url)
+                                            <a href="{{ $creditNote->dian_verification_url }}"
+                                               target="_blank"
+                                               rel="noopener noreferrer"
+                                               class="inline-flex items-center px-2.5 py-1 rounded-lg bg-blue-50 text-blue-700 text-xs font-semibold hover:bg-blue-100">
+                                                DIAN
+                                            </a>
+                                        @endif
+                                    </div>
+                                </div>
+                                <div class="flex flex-col sm:items-end gap-1">
+                                    <span class="inline-flex items-center px-2.5 py-1 rounded-full text-xs font-semibold {{ $creditNote->isAccepted() ? 'bg-emerald-50 text-emerald-700' : ($creditNote->isRejected() ? 'bg-red-50 text-red-700' : 'bg-amber-50 text-amber-700') }}">
+                                        {{ $creditNote->getStatusLabel() }}
+                                    </span>
+                                    <span class="text-sm font-semibold text-gray-900">${{ number_format($creditNote->total, 2) }}</span>
+                                </div>
+                            </div>
+                        @endforeach
+                    </div>
+                @endif
             </div>
 
             <!-- Items de la Factura -->

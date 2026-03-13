@@ -152,6 +152,7 @@ class ElectronicInvoiceController extends Controller
     {
         $electronicInvoice->load([
             'customer.taxProfile',
+            'creditNotes.paymentMethod',
             'numberingRange',
             'documentType',
             'operationType',
@@ -255,6 +256,10 @@ class ElectronicInvoiceController extends Controller
         $updateData = [
             'status' => $status,
         ];
+
+        if (isset($bill['id']) && !empty($bill['id'])) {
+            $updateData['factus_bill_id'] = (int) $bill['id'];
+        }
 
         if (isset($bill['cufe']) && !empty($bill['cufe'])) {
             $updateData['cufe'] = $bill['cufe'];

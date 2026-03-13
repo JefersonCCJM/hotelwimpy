@@ -1,0 +1,110 @@
+<?php
+
+namespace App\Models;
+
+use Illuminate\Database\Eloquent\Model;
+
+class ElectronicCreditNote extends Model
+{
+    protected $fillable = [
+        'electronic_invoice_id',
+        'customer_id',
+        'factus_numbering_range_id',
+        'referenced_factus_bill_id',
+        'factus_credit_note_id',
+        'correction_concept_code',
+        'customization_id',
+        'payment_method_code',
+        'send_email',
+        'reference_code',
+        'document',
+        'status',
+        'cude',
+        'qr',
+        'total',
+        'tax_amount',
+        'gross_value',
+        'discount_amount',
+        'surcharge_amount',
+        'notes',
+        'validated_at',
+        'payload_sent',
+        'response_dian',
+    ];
+
+    protected $casts = [
+        'send_email' => 'boolean',
+        'total' => 'decimal:2',
+        'tax_amount' => 'decimal:2',
+        'gross_value' => 'decimal:2',
+        'discount_amount' => 'decimal:2',
+        'surcharge_amount' => 'decimal:2',
+        'validated_at' => 'datetime',
+        'payload_sent' => 'array',
+        'response_dian' => 'array',
+    ];
+
+    public function electronicInvoice()
+    {
+        return $this->belongsTo(ElectronicInvoice::class);
+    }
+
+    public function customer()
+    {
+        return $this->belongsTo(Customer::class)->withTrashed();
+    }
+
+    public function numberingRange()
+    {
+        return $this->belongsTo(FactusNumberingRange::class, 'factus_numbering_range_id', 'factus_id');
+    }
+
+    public function paymentMethod()
+    {
+        return $this->belongsTo(DianPaymentMethod::class, 'payment_method_code', 'code');
+    }
+
+    public function items()
+    {
+        return $this->hasMany(ElectronicCreditNoteItem::class);
+    }
+
+    public function getDianVerificationUrlAttribute(): ?string
+    {
+        $url = $this->qr ?: data_get($this->response_dian, 'data.credit_note.qr');
+
+        return is_string($url) && str_starts_with($url, 'http') ? $url : null;
+    }
+
+    public function getReferencedBillNumberAttribute(): ?string
+    {
+        $number = data_get($this->response_dian, 'data.credit_note.number_bill');
+
+        return is_string($number) && $number !== '' ? $number : null;
+    }
+
+    public function isAccepted(): bool
+    {
+        return $this->status === 'accepted';
+    }
+
+    public function isRejected(): bool
+    {
+        return $this->status === 'rejected';
+    }
+
+    public function isPending(): bool
+    {
+        return $this->status === 'pending';
+    }
+
+    public function getStatusLabel(): string
+    {
+        return match ($this->status) {
+            'accepted' => 'Aceptada',
+            'rejected' => 'Rechazada',
+            'cancelled' => 'Cancelada',
+            default => 'Pendiente',
+        };
+    }
+}

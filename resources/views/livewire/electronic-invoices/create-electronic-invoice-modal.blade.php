@@ -238,8 +238,7 @@
                                     rows="3"
                                     maxlength="250"
                                     class="block w-full px-3 py-2.5 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                                    placeholder="Observaciones que deben enviarse a Factus..."></textarea>
-                            <p class="mt-1 text-xs text-gray-500">Maximo 250 caracteres.</p>
+                                    placeholder="Notas adicionales de la factura..."></textarea>
                             @error('formData.notes')
                                 <p class="mt-1.5 text-xs text-red-600">{{ $message }}</p>
                             @enderror

@@ -67,5 +67,52 @@ class SaveCustomerTaxProfileRequest extends FormRequest
 
         return $rules;
     }
-}
 
+    public function withValidator($validator): void
+    {
+        $validator->after(function ($validator): void {
+            if (!$this->boolean('requires_electronic_invoice')) {
+                return;
+            }
+
+            $document = $this->has('identification_document_id')
+                ? DianIdentificationDocument::find($this->input('identification_document_id'))
+                : null;
+
+            if (!$document || $document->code !== 'NIT') {
+                return;
+            }
+
+            $identification = preg_replace('/\D+/', '', (string) $this->input('identification'));
+            $dv = $this->input('dv');
+
+            if ($identification === '' || $dv === null || $dv === '') {
+                return;
+            }
+
+            $expectedDv = $this->calculateNitDv($identification);
+            if ((int) $dv !== $expectedDv) {
+                $validator->errors()->add(
+                    'dv',
+                    "El DV no coincide con el NIT informado. Factus espera {$expectedDv} para {$identification}."
+                );
+            }
+        });
+    }
+
+    private function calculateNitDv(string $nit): int
+    {
+        $weights = [41, 37, 33, 29, 25, 23, 19, 17, 13, 11, 7, 3, 1];
+        $sum = 0;
+        $nitReversed = strrev($nit);
+        $length = strlen($nitReversed);
+
+        for ($i = 0; $i < $length && $i < 13; $i++) {
+            $sum += ((int) $nitReversed[$i]) * $weights[$i];
+        }
+
+        $mod = $sum % 11;
+
+        return $mod < 2 ? $mod : 11 - $mod;
+    }
+}

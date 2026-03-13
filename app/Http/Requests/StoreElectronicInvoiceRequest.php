@@ -43,7 +43,7 @@ class StoreElectronicInvoiceRequest extends FormRequest
             'operation_type_id.exists' => 'El tipo de operación seleccionado no es válido.',
             'payment_method_code.exists' => 'El método de pago seleccionado no es válido.',
             'payment_form_code.exists' => 'La forma de pago seleccionada no es válida.',
-            'notes.max' => 'Las observaciones no pueden exceder 250 caracteres.',
+            'notes.max' => 'La observacion no puede exceder 250 caracteres.',
             'items.required' => 'Debe agregar al menos un servicio a la factura.',
             'items.min' => 'Debe agregar al menos un servicio a la factura.',
             'items.*.service_id.required' => 'Cada item debe tener un servicio asociado.',
