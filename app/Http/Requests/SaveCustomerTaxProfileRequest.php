@@ -5,6 +5,7 @@ namespace App\Http\Requests;
 use App\Models\DianIdentificationDocument;
 use App\Models\DianMunicipality;
 use Illuminate\Foundation\Http\FormRequest;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Validation\Rule;
 
 class SaveCustomerTaxProfileRequest extends FormRequest
@@ -92,10 +93,12 @@ class SaveCustomerTaxProfileRequest extends FormRequest
 
             $expectedDv = $this->calculateNitDv($identification);
             if ((int) $dv !== $expectedDv) {
-                $validator->errors()->add(
-                    'dv',
-                    "El DV no coincide con el NIT informado. Factus espera {$expectedDv} para {$identification}."
-                );
+                Log::warning('DV ingresado manualmente no coincide con el calculo local, se conserva el valor proporcionado.', [
+                    'identification' => $identification,
+                    'provided_dv' => (string) $dv,
+                    'calculated_dv' => (string) $expectedDv,
+                    'customer_id' => $this->route('customer')?->id,
+                ]);
             }
         });
     }

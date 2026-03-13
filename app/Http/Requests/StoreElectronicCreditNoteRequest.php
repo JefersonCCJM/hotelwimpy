@@ -2,6 +2,7 @@
 
 namespace App\Http\Requests;
 
+use App\Models\ElectronicCreditNote;
 use App\Models\ElectronicInvoice;
 use Illuminate\Foundation\Http\FormRequest;
 use Illuminate\Validation\Rule;
@@ -18,9 +19,15 @@ class StoreElectronicCreditNoteRequest extends FormRequest
         return [
             'numbering_range_id' => [
                 'required',
-                Rule::exists('factus_numbering_ranges', 'id')->where(fn ($query) => $query->where('document', 'Nota Crédito')),
+                Rule::exists('factus_numbering_ranges', 'id')->where(
+                    fn ($query) => $query->where('document', 'Nota Crédito')
+                ),
             ],
-            'correction_concept_code' => ['required', 'integer', 'min:1'],
+            'correction_concept_code' => [
+                'required',
+                'integer',
+                Rule::in(array_keys(ElectronicCreditNote::CORRECTION_CONCEPTS)),
+            ],
             'payment_method_code' => ['required', 'exists:dian_payment_methods,code'],
             'send_email' => ['nullable', 'boolean'],
             'reference_code' => ['nullable', 'string', 'max:255', 'unique:electronic_credit_notes,reference_code'],
@@ -45,6 +52,7 @@ class StoreElectronicCreditNoteRequest extends FormRequest
             'numbering_range_id.required' => 'Debe seleccionar un rango de numeración para nota crédito.',
             'numbering_range_id.exists' => 'El rango seleccionado no corresponde a una nota crédito activa.',
             'correction_concept_code.required' => 'Debe indicar el código del concepto de corrección.',
+            'correction_concept_code.in' => 'El código de corrección seleccionado no es válido para notas crédito.',
             'payment_method_code.required' => 'Debe seleccionar un método de pago.',
             'payment_method_code.exists' => 'El método de pago seleccionado no es válido.',
             'reference_code.unique' => 'El código de referencia ya fue usado en otra nota crédito.',

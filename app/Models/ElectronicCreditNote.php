@@ -6,6 +6,15 @@ use Illuminate\Database\Eloquent\Model;
 
 class ElectronicCreditNote extends Model
 {
+    public const CORRECTION_CONCEPTS = [
+        1 => 'Devolucion parcial de los bienes y/o no aceptacion parcial del servicio.',
+        2 => 'Anulacion de factura electronica.',
+        3 => 'Rebaja o descuento parcial o total.',
+        4 => 'Ajuste de precio.',
+        5 => 'Descuento comercial por pronto pago.',
+        6 => 'Descuento comercial por volumen de ventas.',
+    ];
+
     protected $fillable = [
         'electronic_invoice_id',
         'customer_id',
@@ -67,6 +76,29 @@ class ElectronicCreditNote extends Model
     public function items()
     {
         return $this->hasMany(ElectronicCreditNoteItem::class);
+    }
+
+    /**
+     * @return array<int, array{code:int,label:string}>
+     */
+    public static function correctionConceptOptions(): array
+    {
+        $options = [];
+
+        foreach (self::CORRECTION_CONCEPTS as $code => $label) {
+            $options[] = [
+                'code' => $code,
+                'label' => $label,
+            ];
+        }
+
+        return $options;
+    }
+
+    public function getCorrectionConceptLabelAttribute(): string
+    {
+        return self::CORRECTION_CONCEPTS[$this->correction_concept_code]
+            ?? 'Codigo ' . $this->correction_concept_code;
     }
 
     public function getDianVerificationUrlAttribute(): ?string

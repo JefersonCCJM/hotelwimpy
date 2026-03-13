@@ -42,18 +42,11 @@ class ElectronicCreditNoteController extends Controller
 
         $paymentMethods = DianPaymentMethod::orderBy('name')->get();
 
-        $correctionConcepts = [
-            ['code' => 1, 'label' => 'Código 1'],
-            ['code' => 2, 'label' => 'Código 2'],
-            ['code' => 3, 'label' => 'Código 3'],
-            ['code' => 4, 'label' => 'Código 4'],
-        ];
-
         return view('electronic-credit-notes.create', [
             'electronicInvoice' => $electronicInvoice,
             'numberingRanges' => $numberingRanges,
             'paymentMethods' => $paymentMethods,
-            'correctionConcepts' => $correctionConcepts,
+            'correctionConcepts' => ElectronicCreditNote::correctionConceptOptions(),
             'defaultItems' => $electronicInvoice->items->map(fn ($item): array => [
                 'code_reference' => $item->code_reference,
                 'name' => $item->name,

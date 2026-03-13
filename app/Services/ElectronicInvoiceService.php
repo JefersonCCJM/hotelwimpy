@@ -809,8 +809,8 @@ class ElectronicInvoiceService
             'document' => $invoice->documentType->code,
             'numbering_range_id' => $invoice->factus_numbering_range_id,
             'reference_code' => $invoice->reference_code,
-            'payment_method_code' => (int) $invoice->payment_method_code,
-            'payment_form_code' => (int) $invoice->payment_form_code,
+            'payment_method_code' => (string) $invoice->payment_method_code,
+            'payment_form_code' => (string) $invoice->payment_form_code,
             'operation_type' => $invoice->operationType->code,
             'establishment' => $establishment,
             'customer' => $customerData,
@@ -1031,8 +1031,8 @@ class ElectronicInvoiceService
                     'factus_numbering_range_id' => 1274, // Rango por defecto
                     'document_type_id' => 1, // Factura electrónica
                     'operation_type_id' => 1, // Estándar
-                    'payment_method_code' => 71, // Efectivo
-                    'payment_form_code' => 1, // Contado
+                    'payment_method_code' => '10', // Efectivo
+                    'payment_form_code' => '1', // Contado
                     'reference_code' => $referenceCode,
                     'document' => 'TEMP-' . substr($referenceCode, -8), // Documento temporal
                     'status' => 'pending',
@@ -1085,9 +1085,12 @@ class ElectronicInvoiceService
         }
 
         if ($currentDv !== $expectedDv) {
-            throw new \Exception(
-                "El DV configurado para el NIT {$taxProfile->identification} es incorrecto. Factus espera {$expectedDv} y el perfil del cliente tiene {$currentDv}. Si este cliente no usa NIT, cambia el tipo de documento a cédula."
-            );
+            Log::warning('DV del cliente no coincide con el calculo local, se enviara el valor almacenado para validacion final de Factus.', [
+                'customer_id' => $customer->id,
+                'identification' => $taxProfile->identification,
+                'stored_dv' => $currentDv,
+                'calculated_dv' => $expectedDv,
+            ]);
         }
     }
 

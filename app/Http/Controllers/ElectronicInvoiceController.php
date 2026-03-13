@@ -45,8 +45,8 @@ class ElectronicInvoiceController extends Controller
         $services = Service::active()->with(['unitMeasure', 'standardCode', 'tribute'])->orderBy('name')->get();
         $documentTypes = DianDocumentType::orderBy('name')->get();
         $operationTypes = DianOperationType::orderBy('name')->get();
-        $paymentMethods = DianPaymentMethod::orderBy('name')->get();
-        $paymentForms = DianPaymentForm::orderBy('name')->get();
+        $paymentMethods = DianPaymentMethod::orderBy('code')->get();
+        $paymentForms = DianPaymentForm::orderBy('code')->get();
 
         // Get tax catalogs for customer creation/edition modals
         $identificationDocuments = \App\Models\DianIdentificationDocument::query()->orderBy('id')->get();

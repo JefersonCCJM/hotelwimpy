@@ -202,6 +202,8 @@ class ElectronicInvoiceServiceTest extends TestCase
         $this->assertSame('accepted', $storedInvoice->status);
         $this->assertSame(514, $storedInvoice->factus_bill_id);
         $this->assertNotNull($capturedPayload);
+        $this->assertSame('10', $capturedPayload['payment_method_code'] ?? null);
+        $this->assertSame('1', $capturedPayload['payment_form_code'] ?? null);
         $this->assertSame('Observacion enviada a Factus', $capturedPayload['observation'] ?? null);
         $this->assertSame(
             'Observacion enviada a Factus',

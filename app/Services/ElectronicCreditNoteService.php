@@ -3,6 +3,7 @@
 namespace App\Services;
 
 use App\Exceptions\FactusApiException;
+use App\Models\Customer;
 use App\Models\ElectronicCreditNote;
 use App\Models\ElectronicCreditNoteItem;
 use App\Models\ElectronicInvoice;
@@ -29,9 +30,14 @@ class ElectronicCreditNoteService
      */
     public function createFromInvoice(ElectronicInvoice $invoice, array $data): ElectronicCreditNote
     {
-        $invoice->loadMissing(['customer', 'items']);
+        $invoice->loadMissing([
+            'customer.taxProfile.identificationDocument',
+            'customer.taxProfile.municipality',
+            'items',
+        ]);
 
         $this->ensureInvoiceCanGenerateCreditNote($invoice);
+        $this->validateCustomerTaxProfileForFactus($invoice->customer);
 
         $factusBillId = $this->resolveReferencedFactusBillId($invoice);
         $numberingRange = $this->resolveNumberingRange((int) $data['numbering_range_id']);
@@ -115,7 +121,12 @@ class ElectronicCreditNoteService
 
     private function sendToFactus(ElectronicCreditNote $creditNote): void
     {
-        $creditNote->loadMissing(['items', 'electronicInvoice']);
+        $creditNote->loadMissing([
+            'items',
+            'electronicInvoice',
+            'customer.taxProfile.identificationDocument',
+            'customer.taxProfile.municipality',
+        ]);
 
         $payload = $this->buildPayload($creditNote);
 
@@ -179,6 +190,8 @@ class ElectronicCreditNoteService
                 'document' => $updateData['document'] ?? $creditNote->document,
             ]);
         } catch (FactusApiException $exception) {
+            $this->persistFailedFactusCreditNoteAttempt($creditNote, $payload, $exception);
+
             Log::error('Error sending credit note to Factus API', [
                 'credit_note_id' => $creditNote->id,
                 'status_code' => $exception->getStatusCode(),
@@ -187,7 +200,9 @@ class ElectronicCreditNoteService
                 'payload' => $payload,
             ]);
 
-            throw new \Exception('Error al enviar la nota credito a Factus: ' . $exception->getMessage());
+            throw new \Exception(
+                'Error al enviar la nota credito a Factus: ' . $this->buildFactusErrorMessage($exception)
+            );
         } catch (\Exception $exception) {
             Log::error('Unexpected error sending credit note to Factus', [
                 'credit_note_id' => $creditNote->id,
@@ -209,6 +224,7 @@ class ElectronicCreditNoteService
             'reference_code' => $creditNote->reference_code,
             'payment_method_code' => $creditNote->payment_method_code,
             'send_email' => $creditNote->send_email,
+            'customer' => $this->buildCustomerPayload($creditNote),
             'items' => $creditNote->items->map(function (ElectronicCreditNoteItem $item): array {
                 return [
                     'note' => $item->note,
@@ -255,27 +271,38 @@ class ElectronicCreditNoteService
 
     private function resolveReferencedFactusBillId(ElectronicInvoice $invoice): int
     {
-        if (!empty($invoice->factus_bill_id)) {
-            return (int) $invoice->factus_bill_id;
+        $resolvedBillId = $this->searchReferencedFactusBillId($invoice);
+        if ($resolvedBillId !== null) {
+            if ((int) $invoice->factus_bill_id !== $resolvedBillId) {
+                $invoice->update(['factus_bill_id' => $resolvedBillId]);
+            }
+
+            return $resolvedBillId;
         }
 
-        $responseBillId = $this->extractBillIdFromStoredResponse($invoice->response_dian ?? []);
-        if ($responseBillId !== null) {
-            $invoice->update(['factus_bill_id' => $responseBillId]);
+        Log::warning('Factura aceptada localmente pero no encontrada en la cuenta actual de Factus', [
+            'electronic_invoice_id' => $invoice->id,
+            'stored_factus_bill_id' => $invoice->factus_bill_id,
+            'stored_response_bill_id' => $this->extractBillIdFromStoredResponse($invoice->response_dian ?? []),
+            'document' => $invoice->document,
+            'reference_code' => $invoice->reference_code,
+            'cufe' => $invoice->cufe,
+        ]);
 
-            return $responseBillId;
-        }
+        throw new \RuntimeException(
+            'No fue posible encontrar la factura seleccionada en la cuenta actual de Factus. Verifica que la factura exista en este ambiente antes de emitir la nota credito.'
+        );
+    }
 
+    private function searchReferencedFactusBillId(ElectronicInvoice $invoice): ?int
+    {
         foreach ($this->buildInvoiceSearchFilters($invoice) as $filters) {
             try {
                 $response = $this->apiService->getBills($filters, 1, 1);
                 $bill = $this->extractFirstBill($response);
 
                 if (!empty($bill['id'])) {
-                    $factusBillId = (int) $bill['id'];
-                    $invoice->update(['factus_bill_id' => $factusBillId]);
-
-                    return $factusBillId;
+                    return (int) $bill['id'];
                 }
             } catch (\Exception $exception) {
                 Log::warning('No se pudo resolver bill_id de Factus para factura referenciada', [
@@ -286,9 +313,7 @@ class ElectronicCreditNoteService
             }
         }
 
-        throw new \RuntimeException(
-            'No fue posible resolver el bill_id de Factus para la factura seleccionada. Actualiza el estado de la factura o recreala antes de emitir la nota credito.'
-        );
+        return null;
     }
 
     /**
@@ -452,6 +477,56 @@ class ElectronicCreditNoteService
         return mb_substr($normalized, 0, self::FACTUS_OBSERVATION_MAX_LENGTH);
     }
 
+    /**
+     * @return array<string, mixed>
+     */
+    private function buildCustomerPayload(ElectronicCreditNote $creditNote): array
+    {
+        $customer = $creditNote->customer;
+        $taxProfile = $customer?->taxProfile;
+        $identificationDocument = $taxProfile?->identificationDocument;
+        $municipality = $taxProfile?->municipality;
+
+        if (!$customer || !$taxProfile || !$identificationDocument || !$municipality) {
+            throw new \RuntimeException(
+                'El cliente de la nota credito no tiene perfil fiscal completo para Factus.'
+            );
+        }
+
+        $payload = [
+            'identification_document_id' => $identificationDocument->id,
+            'identification' => $taxProfile->identification,
+            'municipality_id' => $municipality->factus_id,
+            'legal_organization_id' => $taxProfile->legal_organization_id,
+            'tribute_id' => $taxProfile->tribute_id,
+        ];
+
+        if ($identificationDocument->code === 'NIT' && $taxProfile->dv !== null && $taxProfile->dv !== '') {
+            $payload['dv'] = (string) $taxProfile->dv;
+        }
+
+        if ($identificationDocument->code === 'NIT') {
+            $payload['names'] = $taxProfile->company ?: $customer->name;
+            $payload['company'] = $taxProfile->company ?: $customer->name;
+        } else {
+            $payload['names'] = $taxProfile->names ?: $customer->name;
+        }
+
+        if (!empty($customer->address)) {
+            $payload['address'] = $customer->address;
+        }
+
+        if (!empty($customer->email)) {
+            $payload['email'] = $customer->email;
+        }
+
+        if (!empty($customer->phone)) {
+            $payload['phone'] = $customer->phone;
+        }
+
+        return $payload;
+    }
+
     private function parseFactusDateTime(string $value): ?Carbon
     {
         foreach ([
@@ -471,5 +546,154 @@ class ElectronicCreditNoteService
         } catch (\Throwable) {
             return null;
         }
+    }
+
+    private function persistFailedFactusCreditNoteAttempt(
+        ElectronicCreditNote $creditNote,
+        array $payload,
+        FactusApiException $exception
+    ): void {
+        $responseDian = $exception->getResponseBody();
+
+        if (!is_array($responseDian)) {
+            $responseDian = [
+                'message' => $exception->getMessage(),
+            ];
+        }
+
+        $creditNote->update([
+            'status' => $exception->getStatusCode() === 422 ? 'rejected' : 'pending',
+            'payload_sent' => $payload,
+            'response_dian' => $responseDian,
+        ]);
+    }
+
+    private function buildFactusErrorMessage(FactusApiException $exception): string
+    {
+        $message = "Error en Factus API ({$exception->getStatusCode()}): {$exception->getMessage()}";
+        $errorMessages = $this->extractFactusErrorMessages($exception->getResponseBody());
+
+        if ($errorMessages !== []) {
+            $message .= ' | Detalle: ' . implode(' | ', $errorMessages);
+        }
+
+        return $message;
+    }
+
+    /**
+     * @param mixed $responseBody
+     * @return array<int, string>
+     */
+    private function extractFactusErrorMessages(mixed $responseBody): array
+    {
+        if (!is_array($responseBody)) {
+            return [];
+        }
+
+        $errors = data_get($responseBody, 'data.errors');
+
+        if (!is_array($errors)) {
+            return [];
+        }
+
+        $messages = [];
+
+        foreach ($errors as $key => $value) {
+            if (is_string($value) && trim($value) !== '') {
+                $messages[] = trim($value);
+
+                continue;
+            }
+
+            if (is_array($value)) {
+                foreach ($value as $nestedValue) {
+                    if (is_string($nestedValue) && trim($nestedValue) !== '') {
+                        $messages[] = trim($nestedValue);
+                    }
+                }
+
+                continue;
+            }
+
+            if (is_string($key) && trim($key) !== '') {
+                $messages[] = trim($key);
+            }
+        }
+
+        return array_values(array_unique($messages));
+    }
+
+    private function validateCustomerTaxProfileForFactus(Customer $customer): void
+    {
+        $taxProfile = $customer->taxProfile;
+        $identificationDocument = $taxProfile?->identificationDocument;
+
+        if (!$taxProfile || !$identificationDocument) {
+            throw new \Exception('El cliente no tiene perfil fiscal listo para Factus.');
+        }
+
+        $missingFields = [];
+
+        foreach ([
+            'identification_document_id' => 'tipo de documento',
+            'identification' => 'numero de documento',
+            'legal_organization_id' => 'organizacion juridica',
+            'tribute_id' => 'tributo',
+            'municipality_id' => 'municipio',
+        ] as $field => $label) {
+            if (empty($taxProfile->{$field})) {
+                $missingFields[] = $label;
+            }
+        }
+
+        if ($identificationDocument->code === 'NIT') {
+            if (empty($taxProfile->company) && empty($customer->name)) {
+                $missingFields[] = 'razon social';
+            }
+
+            $expectedDv = $this->calculateDV((string) $taxProfile->identification);
+            $currentDv = $taxProfile->dv !== null ? (int) $taxProfile->dv : null;
+
+            if ($currentDv === null) {
+                $missingFields[] = 'DV';
+            } elseif ($currentDv !== $expectedDv) {
+                Log::warning('DV del cliente no coincide con el calculo local, se enviara el valor almacenado para validacion final de Factus en nota credito.', [
+                    'customer_id' => $customer->id,
+                    'identification' => $taxProfile->identification,
+                    'stored_dv' => $currentDv,
+                    'calculated_dv' => $expectedDv,
+                ]);
+            }
+        } elseif (empty($taxProfile->names) && empty($customer->name)) {
+            $missingFields[] = 'nombre del cliente';
+        }
+
+        if ($missingFields !== []) {
+            throw new \Exception(
+                'El cliente no tiene perfil fiscal completo para emitir la nota credito. Faltan: ' . implode(', ', $missingFields) . '.'
+            );
+        }
+    }
+
+    private function calculateDV(string $nit): int
+    {
+        $nit = preg_replace('/[^0-9]/', '', $nit);
+
+        if (empty($nit)) {
+            return 0;
+        }
+
+        $weights = [41, 37, 33, 29, 25, 23, 19, 17, 13, 11, 7, 3, 1];
+        $sum = 0;
+        $nitReversed = strrev($nit);
+        $length = strlen($nitReversed);
+
+        for ($index = 0; $index < $length && $index < 13; $index++) {
+            $sum += (int) $nitReversed[$index] * $weights[$index];
+        }
+
+        $mod = $sum % 11;
+
+        return $mod < 2 ? $mod : 11 - $mod;
     }
 }
