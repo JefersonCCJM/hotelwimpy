@@ -31,11 +31,19 @@ class FactusNumberingRangeService
             $synced = 0;
             
             foreach ($data as $range) {
+                $rawDocument = isset($range['document']) ? (string) $range['document'] : '';
+                $documentName = isset($range['document_name']) && $range['document_name'] !== ''
+                    ? (string) $range['document_name']
+                    : $rawDocument;
+                $documentCode = isset($range['document_code']) && $range['document_code'] !== ''
+                    ? (string) $range['document_code']
+                    : (is_numeric($rawDocument) ? $rawDocument : null);
+
                 FactusNumberingRange::updateOrCreate(
                     ['factus_id' => $range['id']],
                     [
-                        'document' => $range['document'] ?? '',
-                        'document_code' => $range['document_code'] ?? null,
+                        'document' => $documentName,
+                        'document_code' => $documentCode,
                         'prefix' => $range['prefix'] ?? null,
                         'range_from' => $range['from'] ?? $range['range_from'] ?? 0,
                         'range_to' => $range['to'] ?? $range['range_to'] ?? 0,
@@ -65,7 +73,10 @@ class FactusNumberingRangeService
 
     public static function getValidRangeForDocument(string $documentType): ?FactusNumberingRange
     {
-        return FactusNumberingRange::where('document', $documentType)
+        return FactusNumberingRange::where(function ($query) use ($documentType) {
+                $query->where('document', $documentType)
+                    ->orWhere('document_code', $documentType);
+            })
             ->where('is_active', true)
             ->where('is_expired', false)
             ->first();

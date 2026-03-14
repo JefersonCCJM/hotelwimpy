@@ -1285,6 +1285,7 @@ class ElectronicCreditNoteServiceTest extends TestCase
         $creditNoteRange = FactusNumberingRange::create([
             'factus_id' => $invoiceReference === 'INV-001' ? 1275 : 2275,
             'document' => "Nota Cr\xC3\xA9dito",
+            'document_code' => FactusNumberingRange::CREDIT_NOTE_DOCUMENT_CODE,
             'prefix' => 'NC',
             'range_from' => 1,
             'range_to' => 999999,

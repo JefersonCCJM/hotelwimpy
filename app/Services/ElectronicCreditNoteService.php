@@ -385,7 +385,7 @@ class ElectronicCreditNoteService
     {
         $numberingRange = FactusNumberingRange::findOrFail($numberingRangeId);
 
-        if (!$numberingRange->isValid() || $numberingRange->document !== 'Nota Crédito') {
+        if (!$numberingRange->isValid() || !$numberingRange->isCreditNoteRange()) {
             throw new \InvalidArgumentException('El rango de numeracion seleccionado no corresponde a notas credito activas.');
         }
 
@@ -1225,3 +1225,4 @@ class ElectronicCreditNoteService
         return $mod < 2 ? $mod : 11 - $mod;
     }
 }
+
