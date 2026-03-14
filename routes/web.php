@@ -300,6 +300,10 @@ Route::middleware('auth')->group(function () {
                     ->name('electronic-credit-notes.store');
                 Route::get('/electronic-credit-notes/{electronicCreditNote}', [\App\Http\Controllers\ElectronicCreditNoteController::class, 'show'])
                     ->name('electronic-credit-notes.show');
+                Route::post('/electronic-credit-notes/{electronicCreditNote}/verify', [\App\Http\Controllers\ElectronicCreditNoteController::class, 'verify'])
+                    ->name('electronic-credit-notes.verify');
+                Route::post('/electronic-credit-notes/{electronicCreditNote}/cleanup', [\App\Http\Controllers\ElectronicCreditNoteController::class, 'cleanup'])
+                    ->name('electronic-credit-notes.cleanup');
                 Route::get('/electronic-credit-notes/{electronicCreditNote}/download-pdf', [\App\Http\Controllers\ElectronicCreditNoteController::class, 'downloadPdf'])
                     ->name('electronic-credit-notes.download-pdf');
                 Route::post('/electronic-invoices/{electronicInvoice}/refresh-status', [\App\Http\Controllers\ElectronicInvoiceController::class , 'refreshStatus'])

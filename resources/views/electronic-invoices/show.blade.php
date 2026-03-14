@@ -122,7 +122,10 @@
                     </form>
                 @endif
 
-                @if($electronicInvoice->canGenerateCreditNote())
+                @if(
+                    $electronicInvoice->canGenerateCreditNote()
+                    && $electronicInvoice->creditNotes->where('status', 'accepted')->where('correction_concept_code', 2)->isEmpty()
+                )
                     <a href="{{ route('electronic-credit-notes.create', $electronicInvoice) }}"
                        class="inline-flex items-center justify-center px-4 sm:px-5 py-2.5 rounded-xl border-2 border-amber-500 bg-amber-500 text-white text-sm font-semibold hover:bg-amber-600 hover:border-amber-600 transition-all duration-200 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-amber-500 shadow-sm hover:shadow-md">
                         <i class="fas fa-receipt mr-2"></i>
@@ -282,6 +285,26 @@
                                            class="inline-flex items-center px-2.5 py-1 rounded-lg bg-gray-100 text-gray-700 text-xs font-semibold hover:bg-gray-200">
                                             Ver detalle
                                         </a>
+                                        @if($creditNote->canRetryWithFactus())
+                                            <form method="POST" action="{{ route('electronic-credit-notes.verify', $creditNote) }}">
+                                                @csrf
+                                                <button type="submit"
+                                                        class="inline-flex items-center px-2.5 py-1 rounded-lg bg-amber-50 text-amber-700 text-xs font-semibold hover:bg-amber-100">
+                                                    Verificar
+                                                </button>
+                                            </form>
+                                        @endif
+                                        @if($creditNote->canCleanupInFactus())
+                                            <form method="POST"
+                                                  action="{{ route('electronic-credit-notes.cleanup', $creditNote) }}"
+                                                  onsubmit="return confirm('Esto eliminara la nota credito pendiente en Factus y la marcara como cancelada localmente. Deseas continuar?');">
+                                                @csrf
+                                                <button type="submit"
+                                                        class="inline-flex items-center px-2.5 py-1 rounded-lg bg-rose-50 text-rose-700 text-xs font-semibold hover:bg-rose-100">
+                                                    Limpiar
+                                                </button>
+                                            </form>
+                                        @endif
                                         <a href="{{ route('electronic-credit-notes.download-pdf', $creditNote) }}"
                                            class="inline-flex items-center px-2.5 py-1 rounded-lg bg-red-50 text-red-700 text-xs font-semibold hover:bg-red-100">
                                             PDF
@@ -297,7 +320,7 @@
                                     </div>
                                 </div>
                                 <div class="flex flex-col sm:items-end gap-1">
-                                    <span class="inline-flex items-center px-2.5 py-1 rounded-full text-xs font-semibold {{ $creditNote->isAccepted() ? 'bg-emerald-50 text-emerald-700' : ($creditNote->isRejected() ? 'bg-red-50 text-red-700' : 'bg-amber-50 text-amber-700') }}">
+                                    <span class="inline-flex items-center px-2.5 py-1 rounded-full text-xs font-semibold {{ $creditNote->isAccepted() ? 'bg-emerald-50 text-emerald-700' : ($creditNote->isRejected() ? 'bg-red-50 text-red-700' : ($creditNote->isCancelled() ? 'bg-gray-100 text-gray-700' : 'bg-amber-50 text-amber-700')) }}">
                                         {{ $creditNote->getStatusLabel() }}
                                     </span>
                                     <span class="text-sm font-semibold text-gray-900">${{ number_format($creditNote->total, 2) }}</span>

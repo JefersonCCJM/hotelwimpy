@@ -4,9 +4,22 @@
 @section('header', 'Nota Crédito')
 
 @php
-    $factusErrors = data_get($electronicCreditNote->response_dian, 'data.credit_note.errors', []);
+    $factusErrors = collect(data_get($electronicCreditNote->response_dian, 'data.credit_note.errors', []))
+        ->filter(fn ($error) => is_string($error) && trim($error) !== '')
+        ->when(
+            $electronicCreditNote->isAccepted(),
+            fn ($errors) => $errors->reject(
+                fn ($error) => str_contains(\Illuminate\Support\Str::lower($error), 'regla: 90')
+                    || str_contains(\Illuminate\Support\Str::lower($error), 'documento procesado anteriormente')
+            )
+        )
+        ->values()
+        ->all();
     $dianVerificationUrl = $electronicCreditNote->dian_verification_url;
     $referencedBillNumber = $electronicCreditNote->referenced_bill_number;
+    $hasRule90Error = collect($factusErrors)->contains(
+        fn ($error) => is_string($error) && str_contains(\Illuminate\Support\Str::lower($error), 'regla: 90')
+    );
 @endphp
 
 @section('content')
@@ -14,6 +27,16 @@
     @if(session('success'))
         <div class="bg-emerald-50 border-l-4 border-emerald-500 p-4 rounded-lg">
             <p class="text-sm font-semibold text-emerald-800">{{ session('success') }}</p>
+        </div>
+    @endif
+
+    @if($errors->any())
+        <div class="bg-red-50 border-l-4 border-red-500 p-4 rounded-lg">
+            <ul class="text-sm font-semibold text-red-800 space-y-1">
+                @foreach($errors->all() as $error)
+                    <li>{{ $error }}</li>
+                @endforeach
+            </ul>
         </div>
     @endif
 
@@ -30,7 +53,7 @@
                     </div>
                 </div>
                 <div class="mt-4 flex flex-wrap gap-3">
-                    <span class="inline-flex items-center px-3 py-1 rounded-full text-xs font-semibold {{ $electronicCreditNote->isAccepted() ? 'bg-emerald-50 text-emerald-700' : ($electronicCreditNote->isRejected() ? 'bg-red-50 text-red-700' : 'bg-amber-50 text-amber-700') }}">
+                    <span class="inline-flex items-center px-3 py-1 rounded-full text-xs font-semibold {{ $electronicCreditNote->isAccepted() ? 'bg-emerald-50 text-emerald-700' : ($electronicCreditNote->isRejected() ? 'bg-red-50 text-red-700' : ($electronicCreditNote->isCancelled() ? 'bg-gray-100 text-gray-700' : 'bg-amber-50 text-amber-700')) }}">
                         {{ $electronicCreditNote->getStatusLabel() }}
                     </span>
                     @if($electronicCreditNote->cude)
@@ -42,6 +65,30 @@
             </div>
 
             <div class="flex flex-col sm:flex-row gap-2 sm:gap-3">
+                @if($electronicCreditNote->canRetryWithFactus())
+                    <form method="POST" action="{{ route('electronic-credit-notes.verify', $electronicCreditNote) }}">
+                        @csrf
+                        <button type="submit"
+                                class="inline-flex items-center justify-center px-4 py-2.5 rounded-xl border-2 border-amber-600 bg-amber-600 text-white text-sm font-semibold hover:bg-amber-700 hover:border-amber-700">
+                            <i class="fas fa-rotate-right mr-2"></i>
+                            Verificar en Factus
+                        </button>
+                    </form>
+                @endif
+
+                @if($electronicCreditNote->canCleanupInFactus())
+                    <form method="POST"
+                          action="{{ route('electronic-credit-notes.cleanup', $electronicCreditNote) }}"
+                          onsubmit="return confirm('Esto eliminara la nota credito pendiente en Factus y la marcara como cancelada localmente. Deseas continuar?');">
+                        @csrf
+                        <button type="submit"
+                                class="inline-flex items-center justify-center px-4 py-2.5 rounded-xl border-2 border-rose-600 bg-rose-600 text-white text-sm font-semibold hover:bg-rose-700 hover:border-rose-700">
+                            <i class="fas fa-trash mr-2"></i>
+                            Eliminar pendiente en Factus
+                        </button>
+                    </form>
+                @endif
+
                 <a href="{{ route('electronic-credit-notes.download-pdf', $electronicCreditNote) }}"
                    class="inline-flex items-center justify-center px-4 py-2.5 rounded-xl border-2 border-red-600 bg-red-600 text-white text-sm font-semibold hover:bg-red-700 hover:border-red-700">
                     <i class="fas fa-file-pdf mr-2"></i>
@@ -75,6 +122,16 @@
                     <li>{{ $error }}</li>
                 @endforeach
             </ul>
+            @if($hasRule90Error)
+                <p class="mt-3 text-sm text-amber-800">
+                    Regla 90 significa que Factus ya tenia registrada esta referencia. La nota solo debe considerarse aceptada si Factus la reporta validada; mientras no haya validacion, sigue pendiente.
+                </p>
+                @if($electronicCreditNote->canCleanupInFactus())
+                    <p class="mt-2 text-sm text-amber-800">
+                        Si Factus sigue reportandola pendiente, elimina esta referencia en Factus y crea una nueva nota credito corregida.
+                    </p>
+                @endif
+            @endif
         </div>
     @endif
 
@@ -113,7 +170,9 @@
                     </div>
                     <div>
                         <p class="text-xs font-semibold uppercase tracking-wide text-gray-500">Fecha validación</p>
-                        <p class="mt-1 font-semibold text-gray-900">{{ $electronicCreditNote->validated_at?->format('d/m/Y H:i:s') ?? 'Pendiente' }}</p>
+                        <p class="mt-1 font-semibold text-gray-900">
+                            {{ $electronicCreditNote->validated_at?->format('d/m/Y H:i:s') ?? ($electronicCreditNote->isAccepted() ? 'Validada sin fecha informada por Factus' : 'Pendiente') }}
+                        </p>
                     </div>
                     <div>
                         <p class="text-xs font-semibold uppercase tracking-wide text-gray-500">ID Factus</p>

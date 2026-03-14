@@ -34,10 +34,16 @@ class ElectronicCreditNoteService
             'customer.taxProfile.identificationDocument',
             'customer.taxProfile.municipality',
             'items',
+            'creditNotes',
         ]);
 
         $this->ensureInvoiceCanGenerateCreditNote($invoice);
         $this->validateCustomerTaxProfileForFactus($invoice->customer);
+        $this->ensureNoOpenCreditNoteAttemptsForInvoice($invoice);
+        $this->ensureNoDuplicateAcceptedAnulationCreditNote(
+            $invoice,
+            (int) ($data['correction_concept_code'] ?? 0)
+        );
 
         $factusBillId = $this->resolveReferencedFactusBillId($invoice);
         $numberingRange = $this->resolveNumberingRange((int) $data['numbering_range_id']);
@@ -119,6 +125,98 @@ class ElectronicCreditNoteService
         }
     }
 
+    public function verifyWithFactus(ElectronicCreditNote $creditNote): ElectronicCreditNote
+    {
+        $creditNote->loadMissing([
+            'customer.taxProfile.identificationDocument',
+            'customer.taxProfile.municipality',
+            'items',
+            'electronicInvoice',
+        ]);
+
+        if ($creditNote->isAccepted()) {
+            return $creditNote->fresh(['electronicInvoice', 'customer', 'items']);
+        }
+
+        if (!$creditNote->canRetryWithFactus()) {
+            throw new \RuntimeException('Esta nota credito fue cancelada y ya no puede verificarse. Crea una nueva si todavia la necesitas.');
+        }
+
+        if ($this->syncRemoteCreditNoteSnapshot($creditNote, $this->resolveSyncPayload($creditNote), [
+            'flow' => 'verify_existing_remote_credit_note',
+        ])) {
+            return $creditNote->fresh(['electronicInvoice', 'customer', 'items']);
+        }
+
+        $this->validateCustomerTaxProfileForFactus($creditNote->customer);
+        $this->sendToFactus($creditNote);
+
+        return $creditNote->fresh(['electronicInvoice', 'customer', 'items']);
+    }
+
+    public function syncStatusFromFactus(ElectronicCreditNote $creditNote): ElectronicCreditNote
+    {
+        $creditNote->loadMissing([
+            'customer.taxProfile.identificationDocument',
+            'customer.taxProfile.municipality',
+            'items',
+            'electronicInvoice',
+        ]);
+
+        $this->syncRemoteCreditNoteSnapshot($creditNote, $this->resolveSyncPayload($creditNote), [
+            'flow' => 'manual_status_sync',
+        ]);
+
+        return $creditNote->fresh(['electronicInvoice', 'customer', 'items']);
+    }
+
+    public function cleanupPendingInFactus(ElectronicCreditNote $creditNote): ElectronicCreditNote
+    {
+        $creditNote->loadMissing(['electronicInvoice', 'customer', 'items']);
+
+        if (!$creditNote->canCleanupInFactus()) {
+            throw new \RuntimeException('Solo se pueden limpiar en Factus notas credito pendientes o rechazadas con codigo de referencia.');
+        }
+
+        $cleanupResult = 'deleted';
+
+        try {
+            $response = $this->apiService->deleteCreditNoteByReference((string) $creditNote->reference_code);
+        } catch (FactusApiException $exception) {
+            if ($exception->getStatusCode() !== 404) {
+                throw new \RuntimeException(
+                    'No fue posible eliminar la nota credito pendiente en Factus: ' . $this->buildFactusErrorMessage($exception)
+                );
+            }
+
+            $cleanupResult = 'not_found';
+            $response = is_array($exception->getResponseBody())
+                ? $exception->getResponseBody()
+                : ['message' => $exception->getMessage()];
+        }
+
+        $responseDian = is_array($creditNote->response_dian) ? $creditNote->response_dian : [];
+        $responseDian['_manual_cleanup'] = [
+            'performed_at' => now()->toISOString(),
+            'reference_code' => $creditNote->reference_code,
+            'result' => $cleanupResult,
+            'response' => $response,
+        ];
+
+        $creditNote->update([
+            'status' => 'cancelled',
+            'response_dian' => $responseDian,
+        ]);
+
+        Log::info('Nota credito pendiente limpiada manualmente en Factus', [
+            'credit_note_id' => $creditNote->id,
+            'reference_code' => $creditNote->reference_code,
+            'result' => $cleanupResult,
+        ]);
+
+        return $creditNote->fresh(['electronicInvoice', 'customer', 'items']);
+    }
+
     private function sendToFactus(ElectronicCreditNote $creditNote): void
     {
         $creditNote->loadMissing([
@@ -138,59 +236,35 @@ class ElectronicCreditNoteService
 
         try {
             $response = $this->apiService->post('/v1/credit-notes/validate', $payload);
-            $creditNoteData = $response['data']['credit_note'] ?? null;
+            $this->applySuccessfulFactusCreditNoteResponse($creditNote, $payload, $response);
+        } catch (FactusApiException $exception) {
+            $cleanupContext = null;
 
-            if (!is_array($creditNoteData)) {
-                throw new \RuntimeException('Respuesta invalida de Factus al crear la nota credito.');
-            }
+            if ($this->isPendingCreditNoteConflict($exception)) {
+                $cleanupContext = $this->cleanupCurrentFactusCreditNoteReference($creditNote);
 
-            $updateData = [
-                'status' => $this->mapStatusFromResponse($creditNoteData),
-                'payload_sent' => $payload,
-                'response_dian' => $response,
-            ];
+                if (!empty($cleanupContext['current_reference_cleanup']['success'])) {
+                    try {
+                        $response = $this->apiService->post('/v1/credit-notes/validate', $payload);
+                        $this->applySuccessfulFactusCreditNoteResponse($creditNote, $payload, $response, null, [
+                            'cleanup_context' => $cleanupContext,
+                            'flow' => 'retry_after_current_reference_cleanup',
+                        ]);
 
-            if (!empty($creditNoteData['id'])) {
-                $updateData['factus_credit_note_id'] = (int) $creditNoteData['id'];
-            }
-
-            if (!empty($creditNoteData['number'])) {
-                $updateData['document'] = $creditNoteData['number'];
-            }
-
-            if (!empty($creditNoteData['cude'])) {
-                $updateData['cude'] = $creditNoteData['cude'];
-            }
-
-            if (!empty($creditNoteData['qr'])) {
-                $updateData['qr'] = $creditNoteData['qr'];
-            }
-
-            if (!empty($creditNoteData['validated'])) {
-                $updateData['validated_at'] = $this->parseFactusDateTime($creditNoteData['validated']);
-            }
-
-            foreach ([
-                'gross_value' => 'gross_value',
-                'tax_amount' => 'tax_amount',
-                'discount_amount' => 'discount_amount',
-                'surcharge_amount' => 'surcharge_amount',
-                'total' => 'total',
-            ] as $responseKey => $localKey) {
-                if (isset($creditNoteData[$responseKey]) && $creditNoteData[$responseKey] !== null && $creditNoteData[$responseKey] !== '') {
-                    $updateData[$localKey] = (float) $creditNoteData[$responseKey];
+                        return;
+                    } catch (FactusApiException $retryException) {
+                        $exception = $retryException;
+                    }
                 }
             }
 
-            $creditNote->update($updateData);
+            if ($this->isAlreadyProcessedCreditNoteError($exception)
+                && $this->syncExistingProcessedCreditNoteByReference($creditNote, $payload, $cleanupContext)
+            ) {
+                return;
+            }
 
-            Log::info('Nota credito enviada exitosamente a Factus', [
-                'credit_note_id' => $creditNote->id,
-                'status' => $updateData['status'],
-                'document' => $updateData['document'] ?? $creditNote->document,
-            ]);
-        } catch (FactusApiException $exception) {
-            $this->persistFailedFactusCreditNoteAttempt($creditNote, $payload, $exception);
+            $this->persistFailedFactusCreditNoteAttempt($creditNote, $payload, $exception, $cleanupContext);
 
             Log::error('Error sending credit note to Factus API', [
                 'credit_note_id' => $creditNote->id,
@@ -201,7 +275,7 @@ class ElectronicCreditNoteService
             ]);
 
             throw new \Exception(
-                'Error al enviar la nota credito a Factus: ' . $this->buildFactusErrorMessage($exception)
+                'Error al enviar la nota credito a Factus: ' . $this->buildFactusErrorMessage($exception, $cleanupContext)
             );
         } catch (\Exception $exception) {
             Log::error('Unexpected error sending credit note to Factus', [
@@ -256,6 +330,55 @@ class ElectronicCreditNoteService
         if (!$invoice->canGenerateCreditNote()) {
             throw new \InvalidArgumentException('Solo se pueden generar notas credito a partir de facturas aceptadas.');
         }
+    }
+
+    private function ensureNoOpenCreditNoteAttemptsForInvoice(ElectronicInvoice $invoice): void
+    {
+        $openAttempts = $invoice->creditNotes
+            ->whereIn('status', ['pending', 'rejected'])
+            ->values();
+
+        if ($openAttempts->isEmpty()) {
+            return;
+        }
+
+        $labels = $openAttempts
+            ->map(static function (ElectronicCreditNote $creditNote): string {
+                return $creditNote->document ?: $creditNote->reference_code ?: ('ID ' . $creditNote->id);
+            })
+            ->implode(', ');
+
+        throw new \RuntimeException(
+            'Esta factura ya tiene intentos de nota credito pendientes o rechazados (' . $labels . '). Verificalos o limpialos antes de crear una nueva.'
+        );
+    }
+
+    private function ensureNoDuplicateAcceptedAnulationCreditNote(
+        ElectronicInvoice $invoice,
+        int $correctionConceptCode
+    ): void {
+        if ($correctionConceptCode !== 2) {
+            return;
+        }
+
+        $acceptedAnulations = $invoice->creditNotes
+            ->where('status', 'accepted')
+            ->where('correction_concept_code', 2)
+            ->values();
+
+        if ($acceptedAnulations->isEmpty()) {
+            return;
+        }
+
+        $labels = $acceptedAnulations
+            ->map(static function (ElectronicCreditNote $creditNote): string {
+                return $creditNote->document ?: $creditNote->reference_code ?: ('ID ' . $creditNote->id);
+            })
+            ->implode(', ');
+
+        throw new \RuntimeException(
+            'Esta factura ya tiene una nota credito de anulacion aceptada (' . $labels . '). No puedes emitir otra anulacion total para la misma factura.'
+        );
     }
 
     private function resolveNumberingRange(int $numberingRangeId): FactusNumberingRange
@@ -437,23 +560,59 @@ class ElectronicCreditNoteService
     /**
      * @param array<string, mixed> $creditNoteData
      */
-    private function mapStatusFromResponse(array $creditNoteData): string
+    private function mapStatusFromResponse(array $creditNoteData, ?array $summaryData = null): string
     {
-        $status = $creditNoteData['status'] ?? null;
-
-        if (is_string($status)) {
-            $normalized = strtolower($status);
-
-            if (in_array($normalized, ['accepted', 'rejected', 'pending', 'cancelled'], true)) {
-                return $normalized;
-            }
-        }
-
-        if ((string) $status === '1' || !empty($creditNoteData['cude'])) {
+        if ($this->extractValidatedAtFromCreditNoteData($creditNoteData) !== null) {
             return 'accepted';
         }
 
+        $statuses = array_filter([
+            $this->normalizeFactusCreditNoteStatus($creditNoteData['status'] ?? null),
+            $this->normalizeFactusCreditNoteStatus($summaryData['status'] ?? null),
+        ]);
+
+        if (in_array('rejected', $statuses, true)) {
+            return 'rejected';
+        }
+
+        if (in_array('cancelled', $statuses, true)) {
+            return 'cancelled';
+        }
+
+        if (in_array('accepted', $statuses, true)) {
+            return 'accepted';
+        }
+
+        if (in_array('pending', $statuses, true)) {
+            return 'pending';
+        }
+
+        if (!empty($creditNoteData['cude'])) {
+            return 'pending';
+        }
+
         return 'pending';
+    }
+
+    private function normalizeFactusCreditNoteStatus(mixed $status): ?string
+    {
+        if (is_int($status) || (is_string($status) && is_numeric($status))) {
+            return match ((int) $status) {
+                1 => 'accepted',
+                0 => 'pending',
+                default => null,
+            };
+        }
+
+        if (!is_string($status)) {
+            return null;
+        }
+
+        $normalized = strtolower(trim($status));
+
+        return in_array($normalized, ['accepted', 'rejected', 'pending', 'cancelled'], true)
+            ? $normalized
+            : null;
     }
 
     private function generateReferenceCode(): string
@@ -475,6 +634,13 @@ class ElectronicCreditNoteService
         }
 
         return mb_substr($normalized, 0, self::FACTUS_OBSERVATION_MAX_LENGTH);
+    }
+
+    private function resolveSyncPayload(ElectronicCreditNote $creditNote): array
+    {
+        return is_array($creditNote->payload_sent) && $creditNote->payload_sent !== []
+            ? $creditNote->payload_sent
+            : $this->buildPayload($creditNote);
     }
 
     /**
@@ -548,10 +714,86 @@ class ElectronicCreditNoteService
         }
     }
 
+    private function extractValidatedAtFromCreditNoteData(array $creditNoteData): ?Carbon
+    {
+        $value = $creditNoteData['validated'] ?? $creditNoteData['validated_at'] ?? null;
+
+        if (!is_string($value) || trim($value) === '') {
+            return null;
+        }
+
+        return $this->parseFactusDateTime($value);
+    }
+
+    /**
+     * @param array<string, mixed> $response
+     * @param array<string, mixed> $logContext
+     */
+    private function applySuccessfulFactusCreditNoteResponse(
+        ElectronicCreditNote $creditNote,
+        array $payload,
+        array $response,
+        ?array $summaryData = null,
+        array $logContext = []
+    ): void {
+        $creditNoteData = $response['data']['credit_note'] ?? null;
+
+        if (!is_array($creditNoteData)) {
+            throw new \RuntimeException('Respuesta invalida de Factus al crear la nota credito.');
+        }
+
+        $status = $this->mapStatusFromResponse($creditNoteData, $summaryData);
+        $validatedAt = $this->extractValidatedAtFromCreditNoteData($creditNoteData);
+
+        $updateData = [
+            'status' => $status,
+            'payload_sent' => $payload,
+            'response_dian' => $response,
+            'validated_at' => $validatedAt,
+        ];
+
+        if (!empty($creditNoteData['id'])) {
+            $updateData['factus_credit_note_id'] = (int) $creditNoteData['id'];
+        }
+
+        if (!empty($creditNoteData['number'])) {
+            $updateData['document'] = $creditNoteData['number'];
+        }
+
+        if (!empty($creditNoteData['cude'])) {
+            $updateData['cude'] = $creditNoteData['cude'];
+        }
+
+        if (!empty($creditNoteData['qr'])) {
+            $updateData['qr'] = $creditNoteData['qr'];
+        }
+
+        foreach ([
+            'gross_value' => 'gross_value',
+            'tax_amount' => 'tax_amount',
+            'discount_amount' => 'discount_amount',
+            'surcharge_amount' => 'surcharge_amount',
+            'total' => 'total',
+        ] as $responseKey => $localKey) {
+            if (isset($creditNoteData[$responseKey]) && $creditNoteData[$responseKey] !== null && $creditNoteData[$responseKey] !== '') {
+                $updateData[$localKey] = (float) $creditNoteData[$responseKey];
+            }
+        }
+
+        $creditNote->update($updateData);
+
+        Log::info('Nota credito sincronizada exitosamente con Factus', array_merge([
+            'credit_note_id' => $creditNote->id,
+            'status' => $updateData['status'],
+            'document' => $updateData['document'] ?? $creditNote->document,
+        ], $logContext));
+    }
+
     private function persistFailedFactusCreditNoteAttempt(
         ElectronicCreditNote $creditNote,
         array $payload,
-        FactusApiException $exception
+        FactusApiException $exception,
+        ?array $cleanupContext = null
     ): void {
         $responseDian = $exception->getResponseBody();
 
@@ -561,20 +803,47 @@ class ElectronicCreditNoteService
             ];
         }
 
+        if ($cleanupContext !== null && $cleanupContext !== []) {
+            $responseDian['_cleanup'] = $cleanupContext;
+        }
+
         $creditNote->update([
-            'status' => $exception->getStatusCode() === 422 ? 'rejected' : 'pending',
+            'status' => $this->determineFailedCreditNoteStatus($exception, $cleanupContext),
             'payload_sent' => $payload,
             'response_dian' => $responseDian,
         ]);
     }
 
-    private function buildFactusErrorMessage(FactusApiException $exception): string
+    private function determineFailedCreditNoteStatus(
+        FactusApiException $exception,
+        ?array $cleanupContext = null
+    ): string {
+        if ($exception->getStatusCode() === 422) {
+            return 'rejected';
+        }
+
+        if ($this->isPendingCreditNoteConflict($exception)
+            && (int) data_get($cleanupContext, 'current_reference_cleanup.status_code') === 404
+        ) {
+            return 'cancelled';
+        }
+
+        return 'pending';
+    }
+
+    private function buildFactusErrorMessage(FactusApiException $exception, ?array $cleanupContext = null): string
     {
         $message = "Error en Factus API ({$exception->getStatusCode()}): {$exception->getMessage()}";
         $errorMessages = $this->extractFactusErrorMessages($exception->getResponseBody());
 
         if ($errorMessages !== []) {
             $message .= ' | Detalle: ' . implode(' | ', $errorMessages);
+        }
+
+        if (!empty($cleanupContext['current_reference_cleanup']['success'])) {
+            $message .= ' | Factus dejo un pendiente oculto y fue limpiado automaticamente.';
+        } elseif ($exception->getStatusCode() === 409 && $this->isPendingCreditNoteConflict($exception)) {
+            $message .= ' | Revisa las notas credito pendientes con el comando php artisan factus:credit-notes-pending.';
         }
 
         return $message;
@@ -621,6 +890,265 @@ class ElectronicCreditNoteService
         }
 
         return array_values(array_unique($messages));
+    }
+
+    private function isPendingCreditNoteConflict(FactusApiException $exception): bool
+    {
+        if ($exception->getStatusCode() !== 409) {
+            return false;
+        }
+
+        $normalizedMessage = mb_strtolower($exception->getMessage());
+        $normalizedMessage = str_replace(['crédito', 'crÃ©dito', 'crã©dito', 'crãƒâ©dito'], 'credito', $normalizedMessage);
+
+        return str_contains($normalizedMessage, 'nota credito pendiente por enviar a la dian')
+            || preg_match('/nota\s+cr\S*dito\s+pendiente\s+por\s+enviar\s+a\s+la\s+dian/', $normalizedMessage) === 1;
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    private function cleanupCurrentFactusCreditNoteReference(ElectronicCreditNote $creditNote): array
+    {
+        if (empty($creditNote->reference_code)) {
+            return [];
+        }
+
+        try {
+            $response = $this->apiService->deleteCreditNoteByReference($creditNote->reference_code);
+
+            return [
+                'current_reference_cleanup' => [
+                    'success' => true,
+                    'reference_code' => $creditNote->reference_code,
+                    'response' => $response,
+                ],
+            ];
+        } catch (FactusApiException $cleanupException) {
+            return [
+                'current_reference_cleanup' => [
+                    'success' => false,
+                    'reference_code' => $creditNote->reference_code,
+                    'status_code' => $cleanupException->getStatusCode(),
+                    'response' => $cleanupException->getResponseBody(),
+                    'message' => $cleanupException->getMessage(),
+                ],
+            ];
+        } catch (\Throwable $cleanupException) {
+            return [
+                'current_reference_cleanup' => [
+                    'success' => false,
+                    'reference_code' => $creditNote->reference_code,
+                    'message' => $cleanupException->getMessage(),
+                ],
+            ];
+        }
+    }
+
+    private function isAlreadyProcessedCreditNoteError(FactusApiException $exception): bool
+    {
+        if ($exception->getStatusCode() !== 422) {
+            return false;
+        }
+
+        $message = $this->buildFactusErrorMessage($exception);
+        $message = mb_strtolower($message);
+
+        return str_contains($message, 'documento procesado anteriormente')
+            || str_contains($message, 'regla: 90');
+    }
+
+    private function syncExistingProcessedCreditNoteByReference(
+        ElectronicCreditNote $creditNote,
+        array $payload,
+        ?array $cleanupContext = null
+    ): bool {
+        return $this->syncRemoteCreditNoteSnapshot($creditNote, $payload, [
+            'flow' => 'sync_existing_processed_credit_note',
+            'cleanup_context' => $cleanupContext,
+        ]);
+    }
+
+    private function syncRemoteCreditNoteSnapshot(
+        ElectronicCreditNote $creditNote,
+        array $payload,
+        array $logContext = []
+    ): bool {
+        try {
+            $summary = $this->findRemoteCreditNoteSummary($creditNote);
+
+            if (!is_array($summary)) {
+                return $this->syncRemoteCreditNoteByDocument($creditNote, $payload, $logContext);
+            }
+
+            $number = (string) (data_get($summary, 'number') ?? '');
+            if ($number === '') {
+                return false;
+            }
+
+            $creditNoteData = $this->apiService->getCreditNoteByNumber($number);
+            if (!is_array($creditNoteData)) {
+                $creditNoteData = $summary;
+            }
+
+            $mergedCreditNoteData = $creditNoteData;
+
+            foreach (['id', 'number', 'reference_code', 'status', 'cude', 'qr', 'validated', 'validated_at', 'errors'] as $key) {
+                if (
+                    (!array_key_exists($key, $mergedCreditNoteData) || $mergedCreditNoteData[$key] === null || $mergedCreditNoteData[$key] === '')
+                    && array_key_exists($key, $summary)
+                ) {
+                    $mergedCreditNoteData[$key] = $summary[$key];
+                }
+            }
+
+            $this->applySuccessfulFactusCreditNoteResponse($creditNote, $payload, [
+                'data' => [
+                    'credit_note' => $mergedCreditNoteData,
+                ],
+            ], $summary, $logContext);
+
+            return true;
+        } catch (\Throwable $exception) {
+            Log::warning('No se pudo sincronizar la nota credito ya procesada desde Factus', [
+                'credit_note_id' => $creditNote->id,
+                'reference_code' => $creditNote->reference_code,
+                'error' => $exception->getMessage(),
+            ]);
+
+            return $this->syncRemoteCreditNoteByDocument($creditNote, $payload, $logContext);
+        }
+    }
+
+    private function findRemoteCreditNoteSummary(ElectronicCreditNote $creditNote): ?array
+    {
+        $referenceSummary = $this->findRemoteCreditNoteSummaryByFilter(
+            ['reference_code' => $creditNote->reference_code],
+            static fn (array $item, ElectronicCreditNote $creditNote): bool => data_get($item, 'reference_code') === $creditNote->reference_code,
+            $creditNote
+        );
+
+        $numberSummary = $this->findRemoteCreditNoteSummaryByFilter(
+            ['number' => $creditNote->document],
+            static fn (array $item, ElectronicCreditNote $creditNote): bool => data_get($item, 'number') === $creditNote->document,
+            $creditNote
+        );
+
+        return $this->pickBestRemoteCreditNoteSummary($referenceSummary, $numberSummary);
+    }
+
+    /**
+     * @param array<string, mixed> $filters
+     * @param callable(array<string, mixed>, ElectronicCreditNote): bool $matcher
+     * @return array<string, mixed>|null
+     */
+    private function findRemoteCreditNoteSummaryByFilter(
+        array $filters,
+        callable $matcher,
+        ElectronicCreditNote $creditNote
+    ): ?array {
+        $filters = array_filter($filters, static fn ($value): bool => filled($value));
+
+        if ($filters === []) {
+            return null;
+        }
+
+        try {
+            $response = $this->apiService->getCreditNotes($filters, 1, 10);
+            $items = $response['data']['data'] ?? $response['data'] ?? null;
+
+            if (!is_array($items)) {
+                return null;
+            }
+
+            foreach ($items as $item) {
+                if (is_array($item) && $matcher($item, $creditNote)) {
+                    return $item;
+                }
+            }
+        } catch (\Throwable $exception) {
+            Log::warning('No se pudo consultar el resumen remoto de la nota credito en Factus', [
+                'credit_note_id' => $creditNote->id,
+                'filters' => $filters,
+                'error' => $exception->getMessage(),
+            ]);
+        }
+
+        return null;
+    }
+
+    /**
+     * @param array<string, mixed>|null $referenceSummary
+     * @param array<string, mixed>|null $numberSummary
+     * @return array<string, mixed>|null
+     */
+    private function pickBestRemoteCreditNoteSummary(?array $referenceSummary, ?array $numberSummary): ?array
+    {
+        $candidates = array_values(array_filter([$referenceSummary, $numberSummary], 'is_array'));
+
+        if ($candidates === []) {
+            return null;
+        }
+
+        usort($candidates, function (array $left, array $right): int {
+            return $this->scoreRemoteCreditNoteSummary($right) <=> $this->scoreRemoteCreditNoteSummary($left);
+        });
+
+        return $candidates[0];
+    }
+
+    /**
+     * @param array<string, mixed> $summary
+     */
+    private function scoreRemoteCreditNoteSummary(array $summary): int
+    {
+        if ($this->extractValidatedAtFromCreditNoteData($summary) !== null) {
+            return 40;
+        }
+
+        return match ($this->normalizeFactusCreditNoteStatus($summary['status'] ?? null)) {
+            'accepted' => 30,
+            'rejected' => 20,
+            'pending' => 10,
+            'cancelled' => 5,
+            default => 0,
+        };
+    }
+
+    private function syncRemoteCreditNoteByDocument(
+        ElectronicCreditNote $creditNote,
+        array $payload,
+        array $logContext = []
+    ): bool {
+        $number = trim((string) ($creditNote->document ?? ''));
+
+        if ($number === '') {
+            return false;
+        }
+
+        try {
+            $creditNoteData = $this->apiService->getCreditNoteByNumber($number);
+
+            if (!is_array($creditNoteData)) {
+                return false;
+            }
+
+            $this->applySuccessfulFactusCreditNoteResponse($creditNote, $payload, [
+                'data' => [
+                    'credit_note' => $creditNoteData,
+                ],
+            ], null, $logContext);
+
+            return true;
+        } catch (\Throwable $exception) {
+            Log::warning('No se pudo sincronizar la nota credito desde Factus por numero', [
+                'credit_note_id' => $creditNote->id,
+                'document' => $number,
+                'error' => $exception->getMessage(),
+            ]);
+
+            return false;
+        }
     }
 
     private function validateCustomerTaxProfileForFactus(Customer $customer): void

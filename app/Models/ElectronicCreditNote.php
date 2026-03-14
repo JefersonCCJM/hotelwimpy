@@ -103,6 +103,10 @@ class ElectronicCreditNote extends Model
 
     public function getDianVerificationUrlAttribute(): ?string
     {
+        if (!$this->isAccepted()) {
+            return null;
+        }
+
         $url = $this->qr ?: data_get($this->response_dian, 'data.credit_note.qr');
 
         return is_string($url) && str_starts_with($url, 'http') ? $url : null;
@@ -128,6 +132,21 @@ class ElectronicCreditNote extends Model
     public function isPending(): bool
     {
         return $this->status === 'pending';
+    }
+
+    public function isCancelled(): bool
+    {
+        return $this->status === 'cancelled';
+    }
+
+    public function canRetryWithFactus(): bool
+    {
+        return in_array($this->status, ['pending', 'rejected'], true);
+    }
+
+    public function canCleanupInFactus(): bool
+    {
+        return $this->canRetryWithFactus() && filled($this->reference_code);
     }
 
     public function getStatusLabel(): string

@@ -5,6 +5,12 @@
 
 @php
     $formItems = array_values(old('items', $defaultItems));
+    $recoverableCreditNotes = $electronicInvoice->creditNotes->whereIn('status', ['pending', 'rejected']);
+    $acceptedAnulationCreditNotes = $electronicInvoice->creditNotes
+        ->where('status', 'accepted')
+        ->where('correction_concept_code', 2);
+    $hasOpenCreditNoteAttempts = $recoverableCreditNotes->isNotEmpty();
+    $hasAcceptedAnulationCreditNotes = $acceptedAnulationCreditNotes->isNotEmpty();
 @endphp
 
 @section('content')
@@ -54,6 +60,36 @@
                         @endforeach
                     </ul>
                 </div>
+            </div>
+        </div>
+    @endif
+
+    @if($recoverableCreditNotes->isNotEmpty())
+        <div class="bg-amber-50 border-l-4 border-amber-500 p-4 rounded-lg">
+            <p class="text-sm font-semibold text-amber-800">Esta factura ya tiene notas crédito pendientes o rechazadas. Debes verificarlas o limpiarlas antes de crear una nueva.</p>
+            <div class="mt-3 flex flex-wrap gap-2">
+                @foreach($recoverableCreditNotes as $recoverableCreditNote)
+                    <a href="{{ route('electronic-credit-notes.show', $recoverableCreditNote) }}"
+                       class="inline-flex items-center px-3 py-2 rounded-lg bg-white text-amber-800 text-sm font-semibold border border-amber-200 hover:bg-amber-100">
+                        {{ $recoverableCreditNote->document ?: $recoverableCreditNote->reference_code }}
+                    </a>
+                @endforeach
+            </div>
+        </div>
+    @endif
+
+    @if($acceptedAnulationCreditNotes->isNotEmpty())
+        <div class="bg-red-50 border-l-4 border-red-500 p-4 rounded-lg">
+            <p class="text-sm font-semibold text-red-800">
+                Esta factura ya tiene una nota crédito de anulación aceptada. No puedes emitir otra anulación total para la misma factura.
+            </p>
+            <div class="mt-3 flex flex-wrap gap-2">
+                @foreach($acceptedAnulationCreditNotes as $acceptedCreditNote)
+                    <a href="{{ route('electronic-credit-notes.show', $acceptedCreditNote) }}"
+                       class="inline-flex items-center px-3 py-2 rounded-lg bg-white text-red-800 text-sm font-semibold border border-red-200 hover:bg-red-100">
+                        {{ $acceptedCreditNote->document ?: $acceptedCreditNote->reference_code }}
+                    </a>
+                @endforeach
             </div>
         </div>
     @endif
@@ -336,8 +372,8 @@
             </a>
             <button type="submit"
                     class="inline-flex items-center justify-center px-4 py-2.5 rounded-xl border-2 border-amber-600 bg-amber-600 text-white text-sm font-semibold hover:bg-amber-700 hover:border-amber-700 disabled:opacity-60 disabled:cursor-not-allowed"
-                    @disabled($numberingRanges->isEmpty())
-                    :disabled="items.length === 0">
+                    @disabled($numberingRanges->isEmpty() || $hasOpenCreditNoteAttempts || $hasAcceptedAnulationCreditNotes)
+                    :disabled="items.length === 0 || @js($hasOpenCreditNoteAttempts || $hasAcceptedAnulationCreditNotes)">
                 <i class="fas fa-save mr-2"></i>
                 Crear Nota Crédito
             </button>

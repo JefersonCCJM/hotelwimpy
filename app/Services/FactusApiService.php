@@ -270,6 +270,59 @@ class FactusApiService
     }
 
     /**
+     * Obtiene el listado de notas crédito desde Factus con filtros y paginación.
+     *
+     * @param array $filters Filtros: number, reference_code, identification, names, status
+     * @param int $page Número de página
+     * @param int $perPage Resultados por página (máximo 100 según Factus)
+     * @return array
+     * @throws \Exception
+     */
+    public function getCreditNotes(array $filters = [], int $page = 1, int $perPage = 10): array
+    {
+        $params = [
+            'page' => $page,
+            'per_page' => min($perPage, 100),
+        ];
+
+        foreach ($filters as $key => $value) {
+            if (!empty($value)) {
+                $params["filter[{$key}]"] = $value;
+            }
+        }
+
+        return $this->get('/v1/credit-notes', $params);
+    }
+
+    /**
+     * Obtiene una nota crédito específica desde Factus por su número.
+     *
+     * @param string $number
+     * @return array|null
+     * @throws \Exception
+     */
+    public function getCreditNoteByNumber(string $number): ?array
+    {
+        if ($number === '') {
+            return null;
+        }
+
+        try {
+            $response = $this->get("/v1/credit-notes/{$number}");
+        } catch (FactusApiException $exception) {
+            if ($exception->getStatusCode() === 404) {
+                return null;
+            }
+
+            throw $exception;
+        }
+
+        $data = $response['data']['credit_note'] ?? $response['data'] ?? null;
+
+        return is_array($data) ? $data : null;
+    }
+
+    /**
      * Descarga el PDF de una factura desde Factus
      * 
      * @param string $number Número de factura (ej: SETP990000203)
@@ -359,6 +412,58 @@ class FactusApiService
         $responseData = $response->json();
         
         Log::info('Factura eliminada exitosamente de Factus API:', [
+            'reference_code' => $referenceCode,
+            'response' => $responseData,
+        ]);
+
+        return $responseData;
+    }
+
+    public function deleteCreditNoteByReference(string $referenceCode): array
+    {
+        if (empty($referenceCode)) {
+            throw new \InvalidArgumentException('El codigo de referencia no puede estar vacio.');
+        }
+
+        $token = $this->getAuthToken();
+
+        $httpClient = Http::withHeaders([
+            'Authorization' => "Bearer {$token}",
+            'Accept' => 'application/json',
+            'Content-Type' => 'application/json',
+        ]);
+
+        if (!config('factus.verify_ssl', true)) {
+            $httpClient = $httpClient->withoutVerifying();
+        }
+
+        $url = "{$this->baseUrl}/v1/credit-notes/reference/{$referenceCode}";
+
+        Log::info('Eliminando nota credito de Factus API:', [
+            'reference_code' => $referenceCode,
+            'url' => $url,
+        ]);
+
+        $response = $httpClient->delete($url);
+
+        if (!$response->successful()) {
+            $errorData = $response->json();
+            Log::error('Error al eliminar nota credito en Factus API:', [
+                'reference_code' => $referenceCode,
+                'status_code' => $response->status(),
+                'response' => $errorData,
+            ]);
+
+            throw new FactusApiException(
+                "Error al eliminar nota credito en Factus: " . ($errorData['message'] ?? $response->body()),
+                $response->status(),
+                $errorData
+            );
+        }
+
+        $responseData = $response->json();
+
+        Log::info('Nota credito eliminada exitosamente de Factus API:', [
             'reference_code' => $referenceCode,
             'response' => $responseData,
         ]);
