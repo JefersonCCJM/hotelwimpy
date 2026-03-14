@@ -148,6 +148,7 @@ class ManagePendingFactusCreditNotesTest extends TestCase
         $range = FactusNumberingRange::query()->create([
             'factus_id' => random_int(1000, 9999),
             'document' => 'Nota Credito',
+            'document_code' => FactusNumberingRange::CREDIT_NOTE_DOCUMENT_CODE,
             'prefix' => 'NC',
             'range_from' => 1,
             'range_to' => 999999,

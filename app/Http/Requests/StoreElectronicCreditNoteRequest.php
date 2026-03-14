@@ -4,6 +4,7 @@ namespace App\Http\Requests;
 
 use App\Models\ElectronicCreditNote;
 use App\Models\ElectronicInvoice;
+use App\Models\FactusNumberingRange;
 use Illuminate\Foundation\Http\FormRequest;
 use Illuminate\Validation\Rule;
 
@@ -20,7 +21,14 @@ class StoreElectronicCreditNoteRequest extends FormRequest
             'numbering_range_id' => [
                 'required',
                 Rule::exists('factus_numbering_ranges', 'id')->where(
-                    fn ($query) => $query->whereIn('document', ['Nota Crédito', 'Nota Credito', 'Nota CrÃ©dito', 'Nota CrÃƒÂ©dito'])
+                    fn ($query) => $query
+                        ->where('is_active', true)
+                        ->where('is_expired', false)
+                        ->where(function ($creditNoteQuery): void {
+                            $creditNoteQuery
+                                ->whereIn('document', FactusNumberingRange::creditNoteDocumentIdentifiers())
+                                ->orWhereIn('document_code', FactusNumberingRange::creditNoteDocumentCodes());
+                        })
                 ),
             ],
             'correction_concept_code' => [

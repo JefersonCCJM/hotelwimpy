@@ -36,7 +36,7 @@ class ElectronicCreditNoteController extends Controller
 
         $numberingRanges = FactusNumberingRange::query()
             ->valid()
-            ->whereIn('document', ['Nota Credito', 'Nota Crédito', 'Nota CrÃ©dito'])
+            ->forCreditNotes()
             ->orderBy('prefix')
             ->get();
 
