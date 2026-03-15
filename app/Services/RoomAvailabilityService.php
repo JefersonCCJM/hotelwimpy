@@ -241,12 +241,35 @@ class RoomAvailabilityService
             return RoomDisplayStatus::SUCIA;
         }
 
-        // Priority 5: Future reservation
-        $hasFutureReservation = $this->room->reservationRooms()
-            ->where('check_in_date', '>', $date->copy()->endOfDay()->toDateString())
+        // Priority 5: Pending reservation that overlaps the selected operational day.
+        // A reservation scheduled for later dates must not mark the room as reserved yet.
+        $dateString = $date->copy()->startOfDay()->toDateString();
+        $hasPendingReservationForDate = $this->room->reservationRooms()
+            ->where(function ($query) use ($dateString) {
+                $query->where(function ($checkInQuery) use ($dateString) {
+                    $checkInQuery->whereNotNull('check_in_date')
+                        ->whereDate('check_in_date', '<=', $dateString);
+                })->orWhere(function ($fallbackQuery) use ($dateString) {
+                    $fallbackQuery->whereNull('check_in_date')
+                        ->whereHas('reservation', function ($reservationQuery) use ($dateString) {
+                            $reservationQuery->whereDate('check_in_date', '<=', $dateString);
+                        });
+                });
+            })
+            ->where(function ($query) use ($dateString) {
+                $query->whereNull('check_out_date')
+                    ->orWhereDate('check_out_date', '>', $dateString);
+            })
+            ->whereHas('reservation', function ($query) {
+                $query->whereNull('deleted_at');
+            })
+            ->whereDoesntHave('reservation.stays', function ($query) {
+                $query->where('room_id', $this->room->id)
+                    ->whereNotNull('check_in_at');
+            })
             ->exists();
 
-        if ($hasFutureReservation) {
+        if ($hasPendingReservationForDate) {
             return RoomDisplayStatus::RESERVADA;
         }
 

@@ -28,7 +28,7 @@
 
     $cleaningCode = data_get($room->cleaningStatus($selectedDate), 'code', 'limpia');
     $isQuickReserved = (bool) ($room->is_quick_reserved ?? false);
-    $pendingCheckinReservation = $room->pending_checkin_reservation ?? $room->future_reservation ?? null;
+    $pendingCheckinReservation = $room->pending_checkin_reservation ?? null;
     $pendingCheckinReservationCode = strtoupper(trim((string) ($pendingCheckinReservation->reservation_code ?? '')));
     $isPendingReservation = $pendingCheckinReservation && str_starts_with($pendingCheckinReservationCode, 'RES-');
     $hasStayInfo = $stay && $stay->reservation;

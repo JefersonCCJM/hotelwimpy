@@ -1748,7 +1748,7 @@ class RoomManager extends Component
             })
             ->where(function ($query) use ($dateString) {
                 $query->whereNull('check_out_date')
-                    ->orWhereDate('check_out_date', '>=', $dateString);
+                    ->orWhereDate('check_out_date', '>', $dateString);
             })
             ->whereHas('reservation', function ($query) {
                 $query->whereNull('deleted_at');

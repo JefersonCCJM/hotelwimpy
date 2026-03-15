@@ -142,7 +142,8 @@ class RoomManagerGridHydrationService
             $room->pending_checkin_reservation->loadMissing(['customer']);
         }
 
-        $reservationForVisual = $room->pending_checkin_reservation ?: $room->future_reservation;
+        // Only reservations that overlap the selected operational day should tint the row.
+        $reservationForVisual = $room->pending_checkin_reservation;
         $reservationForVisualCode = strtoupper(trim((string) ($reservationForVisual->reservation_code ?? '')));
         $hasPendingReservationVisual = $reservationForVisual
             && str_starts_with($reservationForVisualCode, 'RES-')
@@ -284,7 +285,7 @@ class RoomManagerGridHydrationService
             })
             ->where(function ($query) use ($dateString) {
                 $query->whereNull('check_out_date')
-                    ->orWhereDate('check_out_date', '>=', $dateString);
+                    ->orWhereDate('check_out_date', '>', $dateString);
             })
             ->whereHas('reservation', function ($query) {
                 $query->whereNull('deleted_at');
