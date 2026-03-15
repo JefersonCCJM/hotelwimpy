@@ -168,7 +168,7 @@ class CreateElectronicInvoiceModal extends Component
     public function addItem(): void
     {
         $this->items[] = [
-            'name' => 'Servicio ' . (count($this->items) + 1),
+            'name' => 'Servicio de hotel',
             'quantity' => 1,
             'price' => 0,
             'tax_rate' => 0,
