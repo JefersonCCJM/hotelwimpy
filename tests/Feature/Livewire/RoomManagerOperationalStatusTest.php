@@ -239,6 +239,69 @@ class RoomManagerOperationalStatusTest extends TestCase
     }
 
     #[Test]
+    public function pending_reservations_only_mark_the_room_during_their_operational_range(): void
+    {
+        Carbon::setTestNow(Carbon::parse('2026-03-15 10:00:00', 'America/Bogota'));
+
+        $room = $this->createRoom('401B');
+        $this->createReservationAssignment(
+            $room,
+            'RES-401B',
+            '2026-03-20',
+            '2026-03-23'
+        );
+
+        $beforeRange = Carbon::parse('2026-03-15');
+        $checkInDay = Carbon::parse('2026-03-20');
+        $lastNight = Carbon::parse('2026-03-22');
+        $checkoutDay = Carbon::parse('2026-03-23');
+
+        $freshRoom = $room->fresh();
+
+        $this->assertSame('free_clean', $freshRoom->getOperationalStatus($beforeRange));
+        $this->assertSame(RoomDisplayStatus::LIBRE, $freshRoom->getDisplayStatus($beforeRange));
+
+        $this->assertSame('free_clean', $freshRoom->getOperationalStatus($checkInDay));
+        $this->assertSame(RoomDisplayStatus::RESERVADA, $freshRoom->getDisplayStatus($checkInDay));
+
+        $this->assertSame('free_clean', $freshRoom->getOperationalStatus($lastNight));
+        $this->assertSame(RoomDisplayStatus::RESERVADA, $freshRoom->getDisplayStatus($lastNight));
+
+        $this->assertSame('free_clean', $freshRoom->getOperationalStatus($checkoutDay));
+        $this->assertSame(RoomDisplayStatus::LIBRE, $freshRoom->getDisplayStatus($checkoutDay));
+    }
+
+    #[Test]
+    public function operational_day_cutoff_controls_when_a_pending_reservation_stops_blocking_the_room(): void
+    {
+        $room = $this->createRoom('401C');
+        $this->createReservationAssignment(
+            $room,
+            'RES-401C',
+            '2026-03-20',
+            '2026-03-23'
+        );
+
+        Carbon::setTestNow(Carbon::parse('2026-03-23 05:30:00', 'America/Bogota'));
+        $beforeCutoffOperationalDate = HotelTime::currentOperationalDate();
+
+        $this->assertSame('2026-03-22', $beforeCutoffOperationalDate->toDateString());
+        $this->assertSame(
+            RoomDisplayStatus::RESERVADA,
+            $room->fresh()->getDisplayStatus($beforeCutoffOperationalDate)
+        );
+
+        Carbon::setTestNow(Carbon::parse('2026-03-23 06:30:00', 'America/Bogota'));
+        $afterCutoffOperationalDate = HotelTime::currentOperationalDate();
+
+        $this->assertSame('2026-03-23', $afterCutoffOperationalDate->toDateString());
+        $this->assertSame(
+            RoomDisplayStatus::LIBRE,
+            $room->fresh()->getDisplayStatus($afterCutoffOperationalDate)
+        );
+    }
+
+    #[Test]
     public function room_row_updates_cleaning_status_without_requiring_full_grid_refresh(): void
     {
         Carbon::setTestNow(Carbon::parse('2026-03-07 10:00:00', 'America/Bogota'));
@@ -346,6 +409,33 @@ class RoomManagerOperationalStatusTest extends TestCase
             'is_active' => true,
             'last_cleaned_at' => now(),
         ]);
+    }
+
+    private function createReservationAssignment(
+        Room $room,
+        string $reservationCode,
+        string $checkInDate,
+        string $checkOutDate
+    ): int {
+        $reservationId = DB::table('reservations')->insertGetId([
+            'reservation_code' => $reservationCode,
+            'check_in_date' => $checkInDate,
+            'check_out_date' => $checkOutDate,
+            'created_at' => now(),
+            'updated_at' => now(),
+            'deleted_at' => null,
+        ]);
+
+        DB::table('reservation_rooms')->insert([
+            'reservation_id' => $reservationId,
+            'room_id' => $room->id,
+            'check_in_date' => $checkInDate,
+            'check_out_date' => $checkOutDate,
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+
+        return $reservationId;
     }
 
     private function recreateTestingSchema(): void

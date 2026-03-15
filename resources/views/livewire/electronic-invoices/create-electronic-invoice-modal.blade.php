@@ -265,7 +265,7 @@
                                     <input type="text" 
                                            x-model="(items[{{ $index }}] && items[{{ $index }}].name) ? items[{{ $index }}].name : ''"
                                            @input="syncItem({{ $index }}, 'name', $event.target.value)"
-                                           @blur="if($event.target.value.trim() === '') { $event.target.value = (items[{{ $index }}] && items[{{ $index }}].name) ? items[{{ $index }}].name : 'Servicio ' + ({{ $index }} + 1); syncItem({{ $index }}, 'name', $event.target.value); }"
+                                           @blur="if($event.target.value.trim() === '') { $event.target.value = (items[{{ $index }}] && items[{{ $index }}].name) ? items[{{ $index }}].name : 'Servicio de hotel'; syncItem({{ $index }}, 'name', $event.target.value); }"
                                            class="block w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                                            placeholder="Ej: Alojamiento, Alimentación, Servicios varios..."
                                            required>

@@ -18,7 +18,9 @@
     $canPerformActions = !$isFutureDate && !$isPastDate;
     $canManageRooms = auth()->check() && auth()->user()->hasRole('Administrador');
     $isQuickReserved = (bool) ($room->is_quick_reserved ?? false);
-    $hasPendingReservation = !empty($room->pending_checkin_reservation) || !empty($room->future_reservation);
+    $hasPendingCheckin = !empty($room->pending_checkin_reservation);
+    $hasFutureReservation = !empty($room->future_reservation);
+    $hasScheduledReservation = $hasPendingCheckin || $hasFutureReservation;
     $isInMaintenance = $room->isInMaintenance($selectedDate);
     $actionsKey = implode('-', [
         (int) $room->id,
@@ -27,7 +29,7 @@
         (string) $cleaningCode,
         $isPendingCheckout ? '1' : '0',
         $isQuickReserved ? '1' : '0',
-        $hasPendingReservation ? '1' : '0',
+        $hasScheduledReservation ? '1' : '0',
         $isInMaintenance ? '1' : '0',
     ]);
 @endphp
@@ -37,7 +39,7 @@
     @if($operationalStatus === 'free_clean' && $cleaningCode === 'limpia' && !$isInMaintenance)
         @if($isFutureDate)
             {{-- Cambiar habitacion de reserva futura pendiente --}}
-            @if($room->future_reservation)
+            @if($hasScheduledReservation)
                 <button type="button"
                     wire:click="$parent.openChangeRoom({{ $room->id }})"
                     wire:loading.attr="disabled"
@@ -49,7 +51,7 @@
             @endif
         @elseif($canPerformActions)
             {{-- Cambiar habitacion de reserva futura si tiene RES- --}}
-            @if($hasPendingReservation)
+            @if($hasPendingCheckin)
                 <button type="button"
                     wire:click="$parent.openChangeRoom({{ $room->id }})"
                     wire:loading.attr="disabled"
@@ -59,7 +61,7 @@
                     <span class="sr-only">Cambiar habitacion</span>
                 </button>
             @endif
-            @if($hasPendingReservation)
+            @if($hasPendingCheckin)
                 {{-- Check-in de reserva pendiente (HOY) --}}
                 <button type="button"
                     wire:click="$parent.performReservationCheckIn({{ $room->id }})"
@@ -88,10 +90,10 @@
                 <button type="button"
                     wire:click="$parent.cancelQuickReserve({{ $room->id }})"
                     wire:loading.attr="disabled"
-                    title="{{ $hasPendingReservation ? 'Cancelar reserva' : 'Cancelar reserva rapida' }}"
+                    title="{{ $hasScheduledReservation ? 'Cancelar reserva' : 'Cancelar reserva rapida' }}"
                     class="inline-flex items-center justify-center w-8 h-8 rounded-lg border border-gray-300 bg-gray-100 text-gray-700 hover:bg-gray-200 hover:border-gray-400 transition-colors focus:outline-none focus:ring-2 focus:ring-gray-500 disabled:opacity-50">
-                    <i class="fas fa-times text-sm"></i>
-                    <span class="sr-only">{{ $hasPendingReservation ? 'Cancelar reserva' : 'Cancelar reserva rapida' }}</span>
+                        <i class="fas fa-times text-sm"></i>
+                    <span class="sr-only">{{ $hasScheduledReservation ? 'Cancelar reserva' : 'Cancelar reserva rapida' }}</span>
                 </button>
             @else
                 <button type="button"
