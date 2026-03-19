@@ -29,7 +29,7 @@
     </div>
     @if($products->hasPages())
         <div class="px-6 py-4 border-t border-gray-50">
-            {{ $products->links() }}
+            {{ $products->links('livewire::tailwind') }}
         </div>
     @endif
 </div>
