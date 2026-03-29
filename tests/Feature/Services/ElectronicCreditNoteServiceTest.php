@@ -1215,6 +1215,189 @@ class ElectronicCreditNoteServiceTest extends TestCase
         );
     }
 
+    #[Test]
+    public function it_syncs_an_already_processed_credit_note_when_factus_returns_http_200_with_rule_90(): void
+    {
+        [$invoice, $creditNoteRange] = $this->createAcceptedInvoiceFixture(
+            customerName: 'Nikola Tesla',
+            invoiceReference: 'INV-012',
+            invoiceDocument: 'SETP990000312',
+            invoiceCufe: 'CUFE-121212',
+            itemCodeReference: 'HSP-012',
+            itemName: 'Hospedaje doce noches'
+        );
+
+        $factusApi = Mockery::mock(FactusApiService::class);
+        $factusApi->shouldReceive('getBills')
+            ->once()
+            ->with(Mockery::type('array'), 1, 1)
+            ->andReturn([
+                'data' => ['data' => [['id' => 514, 'number' => 'SETP990000312']]],
+            ]);
+        // POST returns HTTP 200 with Regla 90 error in body
+        $factusApi->shouldReceive('post')
+            ->once()
+            ->with('/v1/credit-notes/validate', Mockery::type('array'))
+            ->andReturn([
+                'data' => [
+                    'credit_note' => [
+                        'id' => 200,
+                        'number' => 'NC76',
+                        'status' => 0,
+                        'errors' => [
+                            'Regla: 90, Rechazo: Documento procesado anteriormente.',
+                        ],
+                    ],
+                ],
+            ]);
+        // getCreditNotes is called twice: once by reference_code filter, once by number filter
+        $factusApi->shouldReceive('getCreditNotes')
+            ->twice()
+            ->with(Mockery::type('array'), 1, 10)
+            ->andReturnUsing(function (array $filters): array {
+                if (($filters['reference_code'] ?? null) === 'NC-012-REGLA90') {
+                    return [
+                        'data' => [
+                            'data' => [
+                                [
+                                    'reference_code' => 'NC-012-REGLA90',
+                                    'number' => 'NC76',
+                                    'status' => 1,
+                                ],
+                            ],
+                        ],
+                    ];
+                }
+
+                return ['data' => ['data' => []]];
+            });
+        $factusApi->shouldReceive('getCreditNoteByNumber')
+            ->once()
+            ->with('NC76')
+            ->andReturn([
+                'id' => 200,
+                'number' => 'NC76',
+                'status' => 1,
+                'cude' => 'CUDE-121212',
+                'qr' => 'https://factus.test/qr/nc76',
+                'validated' => '20-09-2024 09:13:43 AM',
+                'gross_value' => '100000.00',
+                'tax_amount' => '19000.00',
+                'discount_amount' => '0.00',
+                'surcharge_amount' => '0.00',
+                'total' => '119000.00',
+                'reference_code' => 'NC-012-REGLA90',
+            ]);
+
+        $service = new ElectronicCreditNoteService($factusApi);
+
+        $creditNote = $service->createFromInvoice($invoice, [
+            'numbering_range_id' => $creditNoteRange->id,
+            'correction_concept_code' => 2,
+            'payment_method_code' => '10',
+            'reference_code' => 'NC-012-REGLA90',
+            'notes' => 'Anulacion total de la factura',
+            'send_email' => true,
+            'items' => [
+                [
+                    'code_reference' => 'HSP-012',
+                    'name' => 'Hospedaje doce noches',
+                    'quantity' => 1,
+                    'price' => 100000,
+                    'tax_rate' => 19,
+                    'unit_measure_id' => 70,
+                    'standard_code_id' => 1,
+                    'tribute_id' => 18,
+                    'is_excluded' => false,
+                ],
+            ],
+        ]);
+
+        $storedCreditNote = $creditNote->fresh();
+
+        $this->assertSame('accepted', $storedCreditNote->status);
+        $this->assertSame(200, $storedCreditNote->factus_credit_note_id);
+        $this->assertSame('NC76', $storedCreditNote->document);
+        $this->assertSame('CUDE-121212', $storedCreditNote->cude);
+        $this->assertNotNull($storedCreditNote->validated_at);
+    }
+
+    #[Test]
+    public function it_marks_credit_note_as_rejected_when_http_200_rule_90_response_cannot_be_synced(): void
+    {
+        [$invoice, $creditNoteRange] = $this->createAcceptedInvoiceFixture(
+            customerName: 'Gottfried Leibniz',
+            invoiceReference: 'INV-013',
+            invoiceDocument: 'SETP990000313',
+            invoiceCufe: 'CUFE-131313',
+            itemCodeReference: 'HSP-013',
+            itemName: 'Hospedaje trece noches'
+        );
+
+        $factusApi = Mockery::mock(FactusApiService::class);
+        $factusApi->shouldReceive('getBills')
+            ->once()
+            ->with(Mockery::type('array'), 1, 1)
+            ->andReturn([
+                'data' => ['data' => [['id' => 514, 'number' => 'SETP990000313']]],
+            ]);
+        // POST returns HTTP 200 with Regla 90 error — note not found in Factus
+        $factusApi->shouldReceive('post')
+            ->once()
+            ->with('/v1/credit-notes/validate', Mockery::type('array'))
+            ->andReturn([
+                'data' => [
+                    'credit_note' => [
+                        'id' => null,
+                        'number' => 'NC76',
+                        'status' => 0,
+                        'errors' => [
+                            'Regla: 90, Rechazo: Documento procesado anteriormente.',
+                        ],
+                    ],
+                ],
+            ]);
+        // Both getCreditNotes calls return empty — sync cannot find the note
+        $factusApi->shouldReceive('getCreditNotes')
+            ->twice()
+            ->with(Mockery::type('array'), 1, 10)
+            ->andReturn(['data' => ['data' => []]]);
+        // Fallback by document number also returns null
+        $factusApi->shouldReceive('getCreditNoteByNumber')
+            ->once()
+            ->with('NC76')
+            ->andReturn(null);
+
+        $service = new ElectronicCreditNoteService($factusApi);
+
+        $creditNote = $service->createFromInvoice($invoice, [
+            'numbering_range_id' => $creditNoteRange->id,
+            'correction_concept_code' => 2,
+            'payment_method_code' => '10',
+            'reference_code' => 'NC-013-REGLA90',
+            'notes' => 'Anulacion total de la factura',
+            'send_email' => true,
+            'items' => [
+                [
+                    'code_reference' => 'HSP-013',
+                    'name' => 'Hospedaje trece noches',
+                    'quantity' => 1,
+                    'price' => 100000,
+                    'tax_rate' => 19,
+                    'unit_measure_id' => 70,
+                    'standard_code_id' => 1,
+                    'tribute_id' => 18,
+                    'is_excluded' => false,
+                ],
+            ],
+        ]);
+
+        $storedCreditNote = $creditNote->fresh();
+
+        $this->assertSame('rejected', $storedCreditNote->status);
+        $this->assertNotNull($storedCreditNote->response_dian);
+    }
+
     /**
      * @return array{0: ElectronicInvoice, 1: FactusNumberingRange}
      */
