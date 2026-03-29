@@ -16,10 +16,14 @@
       "Bash(node:*)",
       "Bash(python3:*)",
       "Bash(python:*)",
-      "Bash(npm run build)",
-      "Bash(git add .htaccess)",
-      "Bash(git commit -m \"fix: serve static assets from public/ directory via htaccess rewrite\")",
-      "Bash(git push)"
+      "WebFetch(domain:developers.factus.com.co)",
+      "mcp__Claude_in_Chrome__tabs_context_mcp",
+      "WebSearch",
+      "WebFetch(domain:universidad.loggro.com)",
+      "WebFetch(domain:www.postman.com)",
+      "WebFetch(domain:sipe.com.co)",
+      "WebFetch(domain:felcowiki.thefactoryhka.com.co)",
+      "WebFetch(domain:github.com)"
     ]
   }
 }

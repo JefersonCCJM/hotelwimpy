@@ -236,6 +236,16 @@ class ElectronicCreditNoteService
 
         try {
             $response = $this->apiService->post('/v1/credit-notes/validate', $payload);
+
+            if ($this->successResponseHasAlreadyProcessedError($response)) {
+                if ($this->syncExistingProcessedCreditNoteByReference($creditNote, $payload)) {
+                    return;
+                }
+                $this->markCreditNoteAsRejectedFromSuccessRegla90($creditNote, $payload, $response);
+
+                return;
+            }
+
             $this->applySuccessfulFactusCreditNoteResponse($creditNote, $payload, $response);
         } catch (FactusApiException $exception) {
             $cleanupContext = null;
@@ -620,6 +630,39 @@ class ElectronicCreditNoteService
         return 'NC-' . date('Ymd') . '-' . strtoupper(uniqid());
     }
 
+    private function advanceNumberingRangeCurrent(ElectronicCreditNote $creditNote): void
+    {
+        $document = trim((string) ($creditNote->document ?? ''));
+
+        if ($document === '') {
+            return;
+        }
+
+        if (!preg_match('/(\d+)$/', $document, $matches)) {
+            return;
+        }
+
+        $assignedNumber = (int) $matches[1];
+
+        $range = FactusNumberingRange::where('factus_id', $creditNote->factus_numbering_range_id)->first();
+
+        if (!$range) {
+            return;
+        }
+
+        if ($range->current <= $assignedNumber) {
+            $oldCurrent = $range->current;
+            $range->update(['current' => $assignedNumber + 1]);
+
+            Log::info('Rango de numeracion avanzado despues de crear nota credito', [
+                'credit_note_id' => $creditNote->id,
+                'document' => $document,
+                'old_current' => $oldCurrent,
+                'new_current' => $assignedNumber + 1,
+            ]);
+        }
+    }
+
     private function generateDocumentNumber(FactusNumberingRange $range): string
     {
         return ($range->prefix ?? 'NC') . $range->current;
@@ -782,6 +825,11 @@ class ElectronicCreditNoteService
 
         $creditNote->update($updateData);
 
+        if (!empty($updateData['document'])) {
+            $creditNote->refresh();
+            $this->advanceNumberingRangeCurrent($creditNote);
+        }
+
         Log::info('Nota credito sincronizada exitosamente con Factus', array_merge([
             'credit_note_id' => $creditNote->id,
             'status' => $updateData['status'],
@@ -943,6 +991,46 @@ class ElectronicCreditNoteService
                 ],
             ];
         }
+    }
+
+    private function successResponseHasAlreadyProcessedError(array $response): bool
+    {
+        $errors = $response['data']['credit_note']['errors'] ?? [];
+
+        if (!is_array($errors)) {
+            return false;
+        }
+
+        foreach ($errors as $error) {
+            if (!is_string($error)) {
+                continue;
+            }
+
+            $normalized = mb_strtolower($error);
+
+            if (str_contains($normalized, 'regla: 90') || str_contains($normalized, 'documento procesado anteriormente')) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private function markCreditNoteAsRejectedFromSuccessRegla90(
+        ElectronicCreditNote $creditNote,
+        array $payload,
+        array $response
+    ): void {
+        $creditNote->update([
+            'status' => 'rejected',
+            'payload_sent' => $payload,
+            'response_dian' => $response,
+        ]);
+
+        Log::warning('Nota credito marcada como rechazada: Regla 90 detectada en respuesta HTTP 200 de Factus', [
+            'credit_note_id' => $creditNote->id,
+            'reference_code' => $creditNote->reference_code,
+        ]);
     }
 
     private function isAlreadyProcessedCreditNoteError(FactusApiException $exception): bool
