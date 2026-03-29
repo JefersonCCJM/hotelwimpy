@@ -1398,6 +1398,77 @@ class ElectronicCreditNoteServiceTest extends TestCase
         $this->assertNotNull($storedCreditNote->response_dian);
     }
 
+    #[Test]
+    public function it_advances_the_numbering_range_current_after_factus_assigns_a_document_number(): void
+    {
+        [$invoice, $creditNoteRange] = $this->createAcceptedInvoiceFixture(
+            customerName: 'James Watt',
+            invoiceReference: 'INV-014',
+            invoiceDocument: 'SETP990000314',
+            invoiceCufe: 'CUFE-141414',
+            itemCodeReference: 'HSP-014',
+            itemName: 'Hospedaje catorce noches'
+        );
+
+        // $creditNoteRange->current starts at 76 (set in createAcceptedInvoiceFixture)
+        // Factus assigns NC76 → after success, current must be 77
+
+        $factusApi = Mockery::mock(FactusApiService::class);
+        $factusApi->shouldReceive('getBills')
+            ->once()
+            ->with(Mockery::type('array'), 1, 1)
+            ->andReturn([
+                'data' => ['data' => [['id' => 514, 'number' => 'SETP990000314']]],
+            ]);
+        $factusApi->shouldReceive('post')
+            ->once()
+            ->with('/v1/credit-notes/validate', Mockery::type('array'))
+            ->andReturn([
+                'data' => [
+                    'credit_note' => [
+                        'id' => 314,
+                        'number' => 'NC76',
+                        'status' => 1,
+                        'cude' => 'CUDE-141414',
+                        'qr' => 'https://factus.test/qr/nc314',
+                        'validated' => '20-09-2024 09:13:43 AM',
+                        'gross_value' => '100000.00',
+                        'tax_amount' => '19000.00',
+                        'discount_amount' => '0.00',
+                        'surcharge_amount' => '0.00',
+                        'total' => '119000.00',
+                    ],
+                ],
+            ]);
+
+        $service = new ElectronicCreditNoteService($factusApi);
+
+        $service->createFromInvoice($invoice, [
+            'numbering_range_id' => $creditNoteRange->id,
+            'correction_concept_code' => 2,
+            'payment_method_code' => '10',
+            'notes' => 'Anulacion total de la factura',
+            'send_email' => true,
+            'items' => [
+                [
+                    'code_reference' => 'HSP-014',
+                    'name' => 'Hospedaje catorce noches',
+                    'quantity' => 1,
+                    'price' => 100000,
+                    'tax_rate' => 19,
+                    'unit_measure_id' => 70,
+                    'standard_code_id' => 1,
+                    'tribute_id' => 18,
+                    'is_excluded' => false,
+                ],
+            ],
+        ]);
+
+        $creditNoteRange->refresh();
+
+        $this->assertSame(77, $creditNoteRange->current);
+    }
+
     /**
      * @return array{0: ElectronicInvoice, 1: FactusNumberingRange}
      */
