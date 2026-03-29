@@ -147,7 +147,7 @@ class Customer extends Model
             }
         }
         
-        if ($profile->requiresDV() && blank($profile->dv)) {
+        if ($profile->requiresDV() && $profile->dv === null) {
             return false;
         }
         
@@ -197,8 +197,8 @@ class Customer extends Model
             }
         }
 
-        if ($profile->requiresDV() && blank($profile->dv)) {
-            $missing[] = 'DÃ­gito verificador (DV)';
+        if ($profile->requiresDV() && $profile->dv === null) {
+            $missing[] = 'Dígito verificador (DV)';
         }
 
         if ($profile->isJuridicalPerson() && empty($profile->company)) {

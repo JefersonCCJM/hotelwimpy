@@ -486,7 +486,7 @@ class CreateCustomerModal extends Component
             CustomerTaxProfile::create([
                 'customer_id' => $customer->id,
                 'identification' => trim($this->dianData['identification']),
-                'dv' => ($dv = trim((string) ($this->dianData['dv'] ?? ''))) === '' ? null : $dv,
+                'dv' => ($dv = trim((string) ($this->dianData['dv'] ?? ''))) !== '' ? $dv : null,
                 'identification_document_id' => $this->dianData['identification_document_id'],
                 'legal_organization_id' => $this->dianData['legal_organization_id'],
                 'tribute_id' => $this->dianData['tribute_id'],
