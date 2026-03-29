@@ -106,7 +106,7 @@ class StoreCustomerRequest extends FormRequest
             if ($this->requires_electronic_invoice && $this->identification_document_id) {
                 $document = \App\Models\DianIdentificationDocument::find($this->identification_document_id);
                 if ($document && $document->requires_dv) {
-                    if (empty($this->dv)) {
+                    if (trim((string) ($this->dv ?? '')) === '') {
                         $validator->errors()->add('dv', 'El dígito verificador es obligatorio para este tipo de documento.');
                     }
                 }

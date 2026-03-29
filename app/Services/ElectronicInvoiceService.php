@@ -81,7 +81,7 @@ class ElectronicInvoiceService
                     if (empty($taxProfile->municipality_id)) $missingFields[] = 'municipality_id';
                     
                     // Verificar DV si es requerido
-                    if ($taxProfile->requiresDV() && empty($taxProfile->dv)) $missingFields[] = 'dv';
+                    if ($taxProfile->requiresDV() && $taxProfile->dv === null) $missingFields[] = 'dv';
                     
                     // Verificar company si es persona jurídica
                     if ($taxProfile->isJuridicalPerson() && empty($taxProfile->company)) $missingFields[] = 'company (requerido para persona jurídica)';
@@ -89,7 +89,7 @@ class ElectronicInvoiceService
                     // Agregar logs específicos para depuración
                     Log::info('Tax profile validation details:', [
                         'requiresDV' => $taxProfile->requiresDV(),
-                        'hasDV' => !empty($taxProfile->dv),
+                        'hasDV' => $taxProfile->dv !== null,
                         'isJuridicalPerson' => $taxProfile->isJuridicalPerson(),
                         'hasCompany' => !empty($taxProfile->company),
                         'identification_document_id' => $taxProfile->identification_document_id,
@@ -667,7 +667,7 @@ class ElectronicInvoiceService
 
         // Construir el cliente según la documentación de la API
         $dvValue = null;
-        if ($identificationDocument->code === 'NIT' && !empty($taxProfile->dv)) {
+        if ($identificationDocument->code === 'NIT' && $taxProfile->dv !== null) {
             // Usar el DV almacenado directamente sin recalcular
             $dvValue = (string)$taxProfile->dv;
             

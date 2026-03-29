@@ -283,10 +283,10 @@ class EditCustomerModal extends Component
                 }
             }
             // Validar DV si es requerido
-            if ($this->requiresDV && empty($this->formData['dv'])) {
+            if ($this->requiresDV && trim((string) ($this->formData['dv'] ?? '')) === '') {
                 $this->errors['dv'] = 'El dígito verificador es obligatorio.';
             }
-            if ($this->requiresDV && (!empty($this->formData['dv']) && !preg_match('/^[0-9]$/', $this->formData['dv']))) {
+            if ($this->requiresDV && (trim((string) ($this->formData['dv'] ?? '')) !== '' && !preg_match('/^[0-9]$/', $this->formData['dv']))) {
                 $this->errors['dv'] = 'El DV debe ser un solo dígito (0-9).';
             }
         }
