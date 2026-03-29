@@ -236,6 +236,16 @@ class ElectronicCreditNoteService
 
         try {
             $response = $this->apiService->post('/v1/credit-notes/validate', $payload);
+
+            if ($this->successResponseHasAlreadyProcessedError($response)) {
+                if ($this->syncExistingProcessedCreditNoteByReference($creditNote, $payload)) {
+                    return;
+                }
+                $this->markCreditNoteAsRejectedFromSuccessRegla90($creditNote, $payload, $response);
+
+                return;
+            }
+
             $this->applySuccessfulFactusCreditNoteResponse($creditNote, $payload, $response);
         } catch (FactusApiException $exception) {
             $cleanupContext = null;
@@ -943,6 +953,46 @@ class ElectronicCreditNoteService
                 ],
             ];
         }
+    }
+
+    private function successResponseHasAlreadyProcessedError(array $response): bool
+    {
+        $errors = $response['data']['credit_note']['errors'] ?? [];
+
+        if (!is_array($errors)) {
+            return false;
+        }
+
+        foreach ($errors as $error) {
+            if (!is_string($error)) {
+                continue;
+            }
+
+            $normalized = mb_strtolower($error);
+
+            if (str_contains($normalized, 'regla: 90') || str_contains($normalized, 'documento procesado anteriormente')) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private function markCreditNoteAsRejectedFromSuccessRegla90(
+        ElectronicCreditNote $creditNote,
+        array $payload,
+        array $response
+    ): void {
+        $creditNote->update([
+            'status' => 'rejected',
+            'payload_sent' => $payload,
+            'response_dian' => $response,
+        ]);
+
+        Log::warning('Nota credito marcada como rechazada: Regla 90 detectada en respuesta HTTP 200 de Factus', [
+            'credit_note_id' => $creditNote->id,
+            'reference_code' => $creditNote->reference_code,
+        ]);
     }
 
     private function isAlreadyProcessedCreditNoteError(FactusApiException $exception): bool
