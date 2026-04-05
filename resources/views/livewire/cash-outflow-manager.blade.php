@@ -66,7 +66,7 @@
                     <div class="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
                         <i class="fas fa-search text-gray-400 text-sm"></i>
                     </div>
-                    <input type="text" wire:model.live.debounce.300ms="search"
+                    <input type="text" wire:model.live.debounce.300ms="search" autocomplete="off"
                         class="block w-full pl-10 pr-3 py-2.5 bg-gray-50 border border-gray-200 rounded-xl text-sm text-gray-900 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-rose-500 focus:bg-white transition-all"
                         placeholder="Ej: Pago de luz, insumos...">
                 </div>

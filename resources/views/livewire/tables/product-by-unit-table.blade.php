@@ -29,7 +29,7 @@
                 <div class="ms-auto text-secondary">
                     Search:
                     <div class="ms-2 d-inline-block">
-                        <input type="text" wire:model.live="search" class="form-control form-control-sm" aria-label="Search invoice">
+                        <input type="text" autocomplete="off" wire:model.live="search" class="form-control form-control-sm" aria-label="Search invoice">
                     </div>
                 </div>
             </div>
