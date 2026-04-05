@@ -32,6 +32,7 @@
         table.table th { background: #f3f4f6; text-transform: uppercase; letter-spacing: .04em; color: #374151; text-align: left; font-size: 9px; }
         .text-right { text-align: right; }
         .text-center { text-align: center; }
+        table.table tfoot td { border-top: 2px solid #111827; font-weight: 800; padding: 6px 5px; font-size: 10px; }
         .muted { color: #6b7280; }
         .badge { display: inline-block; padding: 2px 6px; border-radius: 999px; font-size: 9px; font-weight: 700; text-transform: uppercase; }
         .badge-blue { background: #dbeafe; color: #1d4ed8; }
@@ -147,6 +148,7 @@
             <table class="table">
                 <thead>
                     <tr>
+                        <th>Fecha</th>
                         <th>Hora</th>
                         <th>Habitacion</th>
                         <th>Huesped</th>
@@ -179,6 +181,7 @@
                             }
                         @endphp
                         <tr>
+                            <td>{{ optional($stay->check_in_at)?->translatedFormat('D d/m') ?? 'N/A' }}</td>
                             <td>{{ optional($stay->check_in_at)->format('H:i') ?? 'N/A' }}</td>
                             <td>Hab. {{ $stay->room->room_number ?? 'N/A' }}</td>
                             <td>{{ $reservation?->customer?->name ?? 'Sin cliente' }}</td>
@@ -188,6 +191,12 @@
                         </tr>
                     @endforeach
                 </tbody>
+                <tfoot>
+                    <tr>
+                        <td colspan="6" class="text-right">Total</td>
+                        <td class="text-right">${{ number_format($shiftRentals->sum(fn($s) => (float) ($s->rental_total ?? (($s->reservation?->reservationRooms?->firstWhere('room_id', $s->room_id)?->subtotal ?? 0) ?: ($s->reservation?->total_amount ?? 0)))), 0, ',', '.') }}</td>
+                    </tr>
+                </tfoot>
             </table>
         @endif
     </div>
@@ -200,19 +209,15 @@
             <table class="table">
                 <thead>
                     <tr>
-                        <th>ID</th>
                         <th>Hora</th>
                         <th>Productos</th>
                         <th class="text-center">Metodo</th>
-                        <th class="text-right">Efectivo</th>
-                        <th class="text-right">Transferencia</th>
                         <th class="text-right">Total</th>
                     </tr>
                 </thead>
                 <tbody>
                     @foreach($handover->sales->sortByDesc('created_at') as $sale)
                         <tr>
-                            <td>#{{ $sale->id }}</td>
                             <td>{{ optional($sale->created_at)->format('H:i') }}</td>
                             <td>
                                 @foreach($sale->items->take(3) as $item)
@@ -223,12 +228,16 @@
                                 @endif
                             </td>
                             <td class="text-center">{{ $sale->payment_method }}</td>
-                            <td class="text-right">${{ number_format((float) ($sale->cash_amount ?? 0), 0, ',', '.') }}</td>
-                            <td class="text-right">${{ number_format((float) ($sale->transfer_amount ?? 0), 0, ',', '.') }}</td>
                             <td class="text-right">${{ number_format((float) ($sale->total ?? 0), 0, ',', '.') }}</td>
                         </tr>
                     @endforeach
                 </tbody>
+                <tfoot>
+                    <tr>
+                        <td colspan="3" class="text-right">Total</td>
+                        <td class="text-right">${{ number_format($handover->sales->sum(fn($s) => (float) ($s->total ?? 0)), 0, ',', '.') }}</td>
+                    </tr>
+                </tfoot>
             </table>
         @endif
     </div>
@@ -276,6 +285,12 @@
                         </tr>
                     @endforeach
                 </tbody>
+                <tfoot>
+                    <tr>
+                        <td colspan="8" class="text-right">Total</td>
+                        <td class="text-right">${{ number_format($shiftRoomSales->sum(fn($s) => (float) ($s->total ?? 0)), 0, ',', '.') }}</td>
+                    </tr>
+                </tfoot>
             </table>
         @endif
     </div>
@@ -290,8 +305,6 @@
                     <tr>
                         <th>Producto</th>
                         <th class="text-right">Recibido</th>
-                        <th class="text-right">Entradas</th>
-                        <th class="text-right">Salidas</th>
                         <th class="text-right">Ventas</th>
                         <th class="text-right">Consumo Hab.</th>
                         <th class="text-right">Entrega</th>
@@ -307,8 +320,6 @@
                                 @endif
                             </td>
                             <td class="text-right">{{ number_format((float) ($productRow['opening'] ?? 0), 0, ',', '.') }}</td>
-                            <td class="text-right">{{ number_format((float) ($productRow['entries'] ?? 0), 0, ',', '.') }}</td>
-                            <td class="text-right">{{ number_format((float) ($productRow['outputs'] ?? 0), 0, ',', '.') }}</td>
                             <td class="text-right">{{ number_format((float) ($productRow['sales'] ?? 0), 0, ',', '.') }}</td>
                             <td class="text-right">{{ number_format((float) ($productRow['room_consumption'] ?? 0), 0, ',', '.') }}</td>
                             <td class="text-right">{{ number_format((float) ($productRow['closing'] ?? 0), 0, ',', '.') }}</td>
@@ -325,6 +336,7 @@
             <table class="table">
                 <thead>
                     <tr>
+                        <th>Fecha</th>
                         <th>Hora</th>
                         <th>Motivo</th>
                         <th class="text-right">Monto</th>
@@ -333,12 +345,19 @@
                 <tbody>
                     @foreach($handover->cashOutflows->sortByDesc('created_at') as $outflow)
                         <tr>
+                            <td>{{ optional($outflow->created_at)?->translatedFormat('D d/m') ?? 'N/A' }}</td>
                             <td>{{ optional($outflow->created_at)->format('H:i') }}</td>
                             <td>{{ $outflow->reason }}</td>
                             <td class="text-right">${{ number_format((float) ($outflow->amount ?? 0), 0, ',', '.') }}</td>
                         </tr>
                     @endforeach
                 </tbody>
+                <tfoot>
+                    <tr>
+                        <td colspan="3" class="text-right">Total</td>
+                        <td class="text-right">${{ number_format($handover->cashOutflows->sum(fn($o) => (float) ($o->amount ?? 0)), 0, ',', '.') }}</td>
+                    </tr>
+                </tfoot>
             </table>
         </div>
     @endif
