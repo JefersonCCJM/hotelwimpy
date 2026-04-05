@@ -223,6 +223,7 @@
                         <table class="min-w-full divide-y divide-gray-100">
                             <thead class="bg-gray-50">
                                 <tr>
+                                    <th class="px-4 py-3 text-left text-[10px] font-black text-gray-500 uppercase">Fecha</th>
                                     <th class="px-4 py-3 text-left text-[10px] font-black text-gray-500 uppercase">Hora</th>
                                     <th class="px-4 py-3 text-left text-[10px] font-black text-gray-500 uppercase">
                                         Habitación</th>
@@ -304,6 +305,9 @@
                                     @endphp
                                     <tr class="hover:bg-gray-50">
                                         <td class="px-4 py-3 whitespace-nowrap text-xs text-gray-500">
+                                            {{ optional($stay->check_in_at)->format('d/m/Y') }} ({{ optional($stay->check_in_at)->locale('es')->isoFormat('ddd') }})
+                                        </td>
+                                        <td class="px-4 py-3 whitespace-nowrap text-xs text-gray-500">
                                             {{ optional($stay->check_in_at)->format('H:i') ?? 'N/A' }}
                                         </td>
                                         <td class="px-4 py-3 whitespace-nowrap text-sm font-bold text-gray-900">
@@ -316,7 +320,12 @@
                                             {{ $reservation->reservation_code ?? '#' . ($reservation->id ?? 'N/A') }}
                                         </td>
                                         <td class="px-4 py-3 whitespace-nowrap text-sm text-gray-600">
-                                            {{ $reservationRoom && $reservationRoom->check_out_date ? \Carbon\Carbon::parse($reservationRoom->check_out_date)->format('d/m/Y') : 'N/A' }}
+                                            @if ($reservationRoom && $reservationRoom->check_out_date)
+                                                @php $coDate = \Carbon\Carbon::parse($reservationRoom->check_out_date); @endphp
+                                                {{ $coDate->format('d/m/Y') }} ({{ $coDate->locale('es')->isoFormat('ddd') }})
+                                            @else
+                                                N/A
+                                            @endif
                                         </td>
                                         <td class="px-4 py-3 whitespace-nowrap">
                                             <div class="flex flex-col gap-1">
