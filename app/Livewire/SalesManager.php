@@ -500,12 +500,21 @@ class SalesManager extends Component
 
     public function render()
     {
+        $user = Auth::user();
+        $operationalShift = Shift::openOperational()->first();
+        $isAdmin = $user?->hasRole('Administrador') ?? false;
+        $activeHandover = $this->resolveOperationalActiveHandover($user, $operationalShift, $isAdmin);
+
         $query = Sale::with(['user', 'room', 'items.product.category']);
 
-        // Filtro por fecha (por defecto día actual)
         $selectedDate = $this->date ?: now()->format('Y-m-d');
         $currentDate = Carbon::parse($selectedDate);
-        $query->byDate($selectedDate);
+
+        if ($activeHandover) {
+            $query->where('shift_handover_id', $activeHandover->id);
+        } else {
+            $query->byDate($selectedDate);
+        }
 
         // Preparar días para la barra de calendario
         $startOfMonth = $currentDate->copy()->startOfMonth();
@@ -564,15 +573,17 @@ class SalesManager extends Component
             ->orderBy('created_at', 'desc')
             ->paginate(20);
 
-        // Calcular estadísticas del día actual (o fecha seleccionada)
-        $statsQuery = Sale::whereDate('sale_date', $selectedDate);
+        // Calcular estadísticas del turno activo (o fecha seleccionada si no hay turno)
+        $statsQuery = $activeHandover
+            ? Sale::where('shift_handover_id', $activeHandover->id)
+            : Sale::whereDate('sale_date', $selectedDate);
         $totalSales = $statsQuery->count();
         $paidSales = (clone $statsQuery)->where('debt_status', 'pagado')->count();
         $pendingSales = (clone $statsQuery)->where('debt_status', 'pendiente')->count();
         $totalCollected = (clone $statsQuery)->where('debt_status', 'pagado')->sum('total');
 
         $externalIncomes = ExternalIncome::with(['user'])
-            ->byDate($selectedDate)
+            ->when($activeHandover, fn($q) => $q->where('shift_handover_id', $activeHandover->id), fn($q) => $q->byDate($selectedDate))
             ->orderByDesc('created_at')
             ->limit(15)
             ->get();
