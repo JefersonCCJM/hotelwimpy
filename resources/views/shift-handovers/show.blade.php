@@ -358,10 +358,7 @@
                 ->filter(fn($p) => !in_array($p->id, $alreadyReversedIds))
                 ->sum(fn($p) => (float) $p->amount);
         @endphp
-        <div class="bg-white rounded-xl border border-gray-100 shadow-sm overflow-hidden"
-             x-data="{
-                 reversedInSession: {{ json_encode($alreadyReversedIds) }}
-             }">
+        <div class="bg-white rounded-xl border border-gray-100 shadow-sm overflow-hidden">
             <div class="px-6 py-4 border-b border-gray-100 flex items-center justify-between">
                 <h3 class="font-bold text-gray-900 uppercase text-xs tracking-wider">
                     <i class="fas fa-file-invoice-dollar mr-2 text-cyan-500"></i>Pagos y Abonos de Reservas
@@ -408,6 +405,11 @@
                                             ->implode(', ');
                                         $isReversal = (float) $payment->amount < 0;
                                         $alreadyReversed = in_array($payment->id, $alreadyReversedIds);
+                                    @endphp
+                                    @if ($isReversal || $alreadyReversed)
+                                        @continue
+                                    @endif
+                                    @php
                                         $pmCode = strtolower(
                                             $payment->paymentMethod?->code ?? ($payment->paymentMethod?->name ?? ''),
                                         );
@@ -424,7 +426,7 @@
                                             default => 'bg-gray-100 text-gray-700',
                                         };
                                     @endphp
-                                    <tr x-bind:class="reversedInSession.includes({{ $payment->id }}) ? 'opacity-50 bg-red-50/40' : '{{ $isReversal ? 'bg-red-50/40' : 'hover:bg-gray-50' }}'">
+                                    <tr class="hover:bg-gray-50">
                                         <td class="px-4 py-3 whitespace-nowrap text-xs text-gray-500">
                                             {{ optional($payment->paid_at ?? $payment->created_at)->format('H:i') }}
                                         </td>
@@ -448,12 +450,6 @@
                                         </td>
                                         <td class="px-4 py-3 whitespace-nowrap text-xs font-mono text-gray-600">
                                             {{ $res?->reservation_code ?? '#' . ($res?->id ?? 'N/A') }}
-                                            @if ($isReversal)
-                                                <span
-                                                    class="ml-1 px-1 py-0.5 rounded text-[9px] font-bold bg-red-100 text-red-700 uppercase">Reversa</span>
-                                            @endif
-                                            <span x-show="reversedInSession.includes({{ $payment->id }})"
-                                                class="ml-1 px-1 py-0.5 rounded text-[9px] font-bold bg-red-100 text-red-700 uppercase">Revertido</span>
                                         </td>
                                         <td class="px-4 py-3 text-sm text-gray-700">
                                             {{ $res?->customer?->name ?? 'N/A' }}
@@ -471,8 +467,8 @@
                                             {{ Str::limit($payment->notes ?? '', 45) ?: '—' }}
                                         </td>
                                         <td
-                                            class="px-4 py-3 whitespace-nowrap text-sm text-right font-bold {{ $isReversal ? 'text-red-600' : 'text-cyan-700' }}">
-                                            {{ $isReversal ? '-' : '' }}${{ number_format(abs((float) $payment->amount), 0, ',', '.') }}
+                                            class="px-4 py-3 whitespace-nowrap text-sm text-right font-bold text-cyan-700">
+                                            ${{ number_format(abs((float) $payment->amount), 0, ',', '.') }}
                                         </td>
                                     </tr>
                                 @endforeach
