@@ -376,6 +376,8 @@
                         <table class="min-w-full divide-y divide-gray-100">
                             <thead class="bg-gray-50">
                                 <tr>
+                                    <th class="px-4 py-3 text-left text-[10px] font-black text-gray-500 uppercase">Fecha
+                                    </th>
                                     <th class="px-4 py-3 text-left text-[10px] font-black text-gray-500 uppercase">Hora
                                     </th>
                                     <th class="px-4 py-3 text-left text-[10px] font-black text-gray-500 uppercase">Forma
@@ -427,8 +429,14 @@
                                         };
                                     @endphp
                                     <tr class="hover:bg-gray-50">
+                                        @php
+                                            $paymentDate = $payment->paid_at ?? $payment->created_at;
+                                        @endphp
                                         <td class="px-4 py-3 whitespace-nowrap text-xs text-gray-500">
-                                            {{ optional($payment->paid_at ?? $payment->created_at)->format('H:i') }}
+                                            {{ optional($paymentDate)->format('d/m/Y') }} ({{ optional($paymentDate)->locale('es')->isoFormat('ddd') }})
+                                        </td>
+                                        <td class="px-4 py-3 whitespace-nowrap text-xs text-gray-500">
+                                            {{ optional($paymentDate)->format('H:i') }}
                                         </td>
                                         <td class="px-4 py-3 whitespace-nowrap text-center">
                                             @php
@@ -542,7 +550,7 @@
                                         <td class="px-4 py-3 whitespace-nowrap text-xs text-gray-400 font-mono">
                                             #{{ $sale->id }}</td>
                                         <td class="px-4 py-3 whitespace-nowrap text-xs text-gray-500">
-                                            {{ $sale->created_at->format('d/m/Y') }}</td>
+                                            {{ $sale->created_at->format('d/m/Y') }} ({{ $sale->created_at->locale('es')->isoFormat('ddd') }})</td>
                                         <td class="px-4 py-3 whitespace-nowrap text-xs text-gray-500">
                                             {{ $sale->created_at->format('H:i') }}</td>
                                         <td class="px-4 py-3 text-sm text-gray-700">
