@@ -524,15 +524,13 @@
                             <thead class="bg-gray-50">
                                 <tr>
                                     <th class="px-4 py-3 text-left text-[10px] font-black text-gray-500 uppercase">ID</th>
+                                    <th class="px-4 py-3 text-left text-[10px] font-black text-gray-500 uppercase">Fecha
+                                    </th>
                                     <th class="px-4 py-3 text-left text-[10px] font-black text-gray-500 uppercase">Hora
                                     </th>
                                     <th class="px-4 py-3 text-left text-[10px] font-black text-gray-500 uppercase">
                                         Productos</th>
                                     <th class="px-4 py-3 text-center text-[10px] font-black text-gray-500 uppercase">Metodo
-                                    </th>
-                                    <th class="px-4 py-3 text-right text-[10px] font-black text-gray-500 uppercase">
-                                        Efectivo</th>
-                                    <th class="px-4 py-3 text-right text-[10px] font-black text-gray-500 uppercase">Transf.
                                     </th>
                                     <th class="px-4 py-3 text-right text-[10px] font-black text-gray-500 uppercase">Total
                                     </th>
@@ -543,6 +541,8 @@
                                     <tr class="hover:bg-gray-50">
                                         <td class="px-4 py-3 whitespace-nowrap text-xs text-gray-400 font-mono">
                                             #{{ $sale->id }}</td>
+                                        <td class="px-4 py-3 whitespace-nowrap text-xs text-gray-500">
+                                            {{ $sale->created_at->format('d/m/Y') }}</td>
                                         <td class="px-4 py-3 whitespace-nowrap text-xs text-gray-500">
                                             {{ $sale->created_at->format('H:i') }}</td>
                                         <td class="px-4 py-3 text-sm text-gray-700">
@@ -571,13 +571,6 @@
                                                 class="px-2 py-0.5 rounded-full text-[10px] font-bold uppercase {{ $methodClass }}">
                                                 {{ $sale->payment_method }}
                                             </span>
-                                        </td>
-                                        <td
-                                            class="px-4 py-3 whitespace-nowrap text-sm text-right font-bold text-emerald-600">
-                                            ${{ number_format($sale->cash_amount ?? 0, 0, ',', '.') }}
-                                        </td>
-                                        <td class="px-4 py-3 whitespace-nowrap text-sm text-right font-bold text-blue-600">
-                                            ${{ number_format($sale->transfer_amount ?? 0, 0, ',', '.') }}
                                         </td>
                                         <td class="px-4 py-3 whitespace-nowrap text-sm text-right font-bold text-gray-900">
                                             ${{ number_format($sale->total, 0, ',', '.') }}
