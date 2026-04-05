@@ -70,6 +70,7 @@
                     <table class="min-w-full divide-y divide-gray-100">
                         <thead class="bg-gray-50">
                             <tr>
+                                <th class="px-4 py-3 text-left text-[10px] font-black text-gray-500 uppercase">Fecha</th>
                                 <th class="px-4 py-3 text-left text-[10px] font-black text-gray-500 uppercase">Hora</th>
                                 <th class="px-4 py-3 text-left text-[10px] font-black text-gray-500 uppercase">Productos
                                 </th>
@@ -82,6 +83,9 @@
                         <tbody class="bg-white divide-y divide-gray-100">
                             @foreach ($shiftSales as $sale)
                                 <tr class="hover:bg-gray-50">
+                                    <td class="px-4 py-3 whitespace-nowrap text-xs text-gray-500">
+                                        {{ $sale->created_at->format('d/m/Y') }} ({{ $sale->created_at->locale('es')->isoFormat('ddd') }})
+                                    </td>
                                     <td class="px-4 py-3 whitespace-nowrap text-xs text-gray-500">
                                         {{ $sale->created_at->format('H:i') }}
                                     </td>
@@ -127,6 +131,9 @@
                                 @endphp
                                 <tr class="hover:bg-red-50/30">
                                     <td class="px-4 py-3 whitespace-nowrap text-xs text-gray-500">
+                                        {{ optional($roomDebtSale->created_at)->format('d/m/Y') }} ({{ optional($roomDebtSale->created_at)->locale('es')->isoFormat('ddd') }})
+                                    </td>
+                                    <td class="px-4 py-3 whitespace-nowrap text-xs text-gray-500">
                                         {{ optional($roomDebtSale->created_at)->format('H:i') }}
                                     </td>
                                     <td class="px-4 py-3 text-sm text-gray-700">
@@ -150,6 +157,14 @@
                                 </tr>
                             @endforeach
                         </tbody>
+                        <tfoot class="bg-gray-50">
+                            <tr>
+                                <td colspan="4" class="px-4 py-3 text-right text-sm font-bold text-gray-900">Total</td>
+                                <td class="px-4 py-3 whitespace-nowrap text-sm text-right font-bold text-gray-900">
+                                    ${{ number_format($shiftSales->sum(fn($s) => (float) ($s->total ?? 0)) + $shiftRoomDebtSales->sum(fn($s) => (float) ($s->total ?? 0)), 0, ',', '.') }}
+                                </td>
+                            </tr>
+                        </tfoot>
                     </table>
                 </div>
             @endif
@@ -176,10 +191,6 @@
                                 </th>
                                 <th class="px-4 py-3 text-right text-[10px] font-black text-gray-500 uppercase">Recibido
                                 </th>
-                                <th class="px-4 py-3 text-right text-[10px] font-black text-gray-500 uppercase">Entradas
-                                </th>
-                                <th class="px-4 py-3 text-right text-[10px] font-black text-gray-500 uppercase">Salidas
-                                </th>
                                 <th class="px-4 py-3 text-right text-[10px] font-black text-gray-500 uppercase">Ventas
                                 </th>
                                 <th class="px-4 py-3 text-right text-[10px] font-black text-gray-500 uppercase">Consumo
@@ -203,13 +214,6 @@
                                     </td>
                                     <td class="px-4 py-3 whitespace-nowrap text-sm text-right font-bold text-gray-900">
                                         {{ number_format((float) ($productRow['opening'] ?? 0), 0, ',', '.') }}
-                                    </td>
-                                    <td
-                                        class="px-4 py-3 whitespace-nowrap text-sm text-right font-bold text-emerald-700">
-                                        {{ number_format((float) ($productRow['entries'] ?? 0), 0, ',', '.') }}
-                                    </td>
-                                    <td class="px-4 py-3 whitespace-nowrap text-sm text-right font-bold text-red-700">
-                                        {{ number_format((float) ($productRow['outputs'] ?? 0), 0, ',', '.') }}
                                     </td>
                                     <td class="px-4 py-3 whitespace-nowrap text-sm text-right text-blue-700">
                                         {{ number_format((float) ($productRow['sales'] ?? 0), 0, ',', '.') }}
@@ -248,17 +252,18 @@
                     <table class="min-w-full divide-y divide-gray-100">
                         <thead class="bg-gray-50">
                             <tr>
-                                <th class="px-4 py-3 text-left text-[10px] font-black text-gray-500 uppercase">Hora
-                                </th>
-                                <th class="px-4 py-3 text-left text-[10px] font-black text-gray-500 uppercase">Motivo
-                                </th>
-                                <th class="px-4 py-3 text-right text-[10px] font-black text-gray-500 uppercase">Monto
-                                </th>
+                                <th class="px-4 py-3 text-left text-[10px] font-black text-gray-500 uppercase">Fecha</th>
+                                <th class="px-4 py-3 text-left text-[10px] font-black text-gray-500 uppercase">Hora</th>
+                                <th class="px-4 py-3 text-left text-[10px] font-black text-gray-500 uppercase">Motivo</th>
+                                <th class="px-4 py-3 text-right text-[10px] font-black text-gray-500 uppercase">Monto</th>
                             </tr>
                         </thead>
                         <tbody class="bg-white divide-y divide-gray-100">
                             @foreach ($shiftOutflows as $outflow)
                                 <tr class="hover:bg-gray-50">
+                                    <td class="px-4 py-3 whitespace-nowrap text-xs text-gray-500">
+                                        {{ $outflow->created_at->format('d/m/Y') }} ({{ $outflow->created_at->locale('es')->isoFormat('ddd') }})
+                                    </td>
                                     <td class="px-4 py-3 whitespace-nowrap text-xs text-gray-500">
                                         {{ $outflow->created_at->format('H:i') }}</td>
                                     <td class="px-4 py-3 text-sm text-gray-700">{{ Str::limit($outflow->reason, 40) }}
@@ -268,6 +273,14 @@
                                 </tr>
                             @endforeach
                         </tbody>
+                        <tfoot class="bg-gray-50">
+                            <tr>
+                                <td colspan="3" class="px-4 py-3 text-right text-sm font-bold text-gray-900">Total</td>
+                                <td class="px-4 py-3 whitespace-nowrap text-sm text-right font-bold text-red-600">
+                                    ${{ number_format($shiftOutflows->sum(fn($o) => (float) ($o->amount ?? 0)), 0, ',', '.') }}
+                                </td>
+                            </tr>
+                        </tfoot>
                     </table>
                 @endif
             </div>
@@ -364,12 +377,14 @@
                     <table class="min-w-full divide-y divide-gray-100">
                         <thead class="bg-gray-50">
                             <tr>
+                                <th class="px-4 py-3 text-left text-[10px] font-black text-gray-500 uppercase">Fecha</th>
                                 <th class="px-4 py-3 text-left text-[10px] font-black text-gray-500 uppercase">Hora</th>
                                 <th class="px-4 py-3 text-left text-[10px] font-black text-gray-500 uppercase">Forma</th>
                                 <th class="px-4 py-3 text-left text-[10px] font-black text-gray-500 uppercase">Reserva</th>
                                 <th class="px-4 py-3 text-left text-[10px] font-black text-gray-500 uppercase">Huesped</th>
                                 <th class="px-4 py-3 text-left text-[10px] font-black text-gray-500 uppercase">Habitacion</th>
                                 <th class="px-4 py-3 text-center text-[10px] font-black text-gray-500 uppercase">Metodo</th>
+                                <th class="px-4 py-3 text-left text-[10px] font-black text-gray-500 uppercase">Banco / Ref</th>
                                 <th class="px-4 py-3 text-right text-[10px] font-black text-gray-500 uppercase">Monto</th>
                                 <th class="px-4 py-3 text-center text-[10px] font-black text-gray-500 uppercase">Accion</th>
                             </tr>
@@ -386,6 +401,11 @@
                                     $isReversal = (float) $payment->amount < 0;
                                     $isPositive = (float) $payment->amount > 0;
                                     $alreadyReversed = in_array($payment->id, $alreadyReversedIds);
+                                @endphp
+                                @if ($isReversal || $alreadyReversed)
+                                    @continue
+                                @endif
+                                @php
                                     $pmCode = strtolower(
                                         $payment->paymentMethod?->code ?? ($payment->paymentMethod?->name ?? ''),
                                     );
@@ -403,10 +423,13 @@
                                     $isWalkIn = str_starts_with($resCode, 'RSV') || str_starts_with($resCode, 'WLK');
                                     $formattedAmt = number_format(abs((float) $payment->amount), 0, ',', '.');
                                 @endphp
-                                <tr
-                                    x-bind:class="reversedInSession.includes({{ $payment->id }}) ? 'opacity-50 bg-red-50/40' : '{{ $isReversal ? 'bg-red-50/40' : 'hover:bg-gray-50' }}'">
+                                @php $paymentDate = $payment->paid_at ?? $payment->created_at; @endphp
+                                <tr class="hover:bg-gray-50">
                                     <td class="px-4 py-3 whitespace-nowrap text-xs text-gray-500">
-                                        {{ optional($payment->paid_at ?? $payment->created_at)->format('H:i') }}
+                                        {{ optional($paymentDate)->format('d/m/Y') }} ({{ optional($paymentDate)->locale('es')->isoFormat('ddd') }})
+                                    </td>
+                                    <td class="px-4 py-3 whitespace-nowrap text-xs text-gray-500">
+                                        {{ optional($paymentDate)->format('H:i') }}
                                     </td>
                                     <td class="px-4 py-3 whitespace-nowrap text-center">
                                         @if ($isWalkIn)
@@ -417,11 +440,6 @@
                                     </td>
                                     <td class="px-4 py-3 whitespace-nowrap text-xs font-mono text-gray-600">
                                         {{ $res?->reservation_code ?? '#' . ($res?->id ?? 'N/A') }}
-                                        @if ($isReversal)
-                                            <span class="ml-1 px-1 py-0.5 rounded text-[9px] font-bold bg-red-100 text-red-700 uppercase">Reversa</span>
-                                        @endif
-                                        <span x-show="reversedInSession.includes({{ $payment->id }})"
-                                            class="ml-1 px-1 py-0.5 rounded text-[9px] font-bold bg-red-100 text-red-700 uppercase">Revertido</span>
                                     </td>
                                     <td class="px-4 py-3 text-sm text-gray-700">{{ $res?->customer?->name ?? 'N/A' }}</td>
                                     <td class="px-4 py-3 whitespace-nowrap text-sm text-gray-700">
@@ -432,11 +450,18 @@
                                             {{ $methodLabel }}
                                         </span>
                                     </td>
-                                    <td class="px-4 py-3 whitespace-nowrap text-sm text-right font-bold {{ $isReversal ? 'text-red-600' : 'text-cyan-700' }}">
-                                        {{ $isReversal ? '-' : '' }}${{ $formattedAmt }}
+                                    <td class="px-4 py-3 text-xs text-gray-500">
+                                        @if ($methodLabel === 'transferencia')
+                                            {{ $payment->bank_name ?? '' }}{{ $payment->bank_name && $payment->reference ? ' / ' : '' }}{{ $payment->reference ?? '' }}
+                                        @else
+                                            —
+                                        @endif
+                                    </td>
+                                    <td class="px-4 py-3 whitespace-nowrap text-sm text-right font-bold text-cyan-700">
+                                        ${{ $formattedAmt }}
                                     </td>
                                     <td class="px-4 py-3 whitespace-nowrap text-center">
-                                        @if ($isPositive && !$alreadyReversed && $res)
+                                        @if ($res)
                                             <button
                                                 type="button"
                                                 x-show="!reversedInSession.includes({{ $payment->id }})"
@@ -449,8 +474,6 @@
                                             </button>
                                             <span x-show="reversedInSession.includes({{ $payment->id }})"
                                                 class="text-[10px] text-red-500 font-semibold">Revertido</span>
-                                        @elseif ($isReversal)
-                                            <span class="text-[10px] text-red-400">—</span>
                                         @else
                                             <span class="text-[10px] text-gray-300">—</span>
                                         @endif
