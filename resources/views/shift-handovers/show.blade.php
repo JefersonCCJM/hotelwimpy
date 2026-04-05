@@ -388,7 +388,7 @@
                                         Habitacion</th>
                                     <th class="px-4 py-3 text-center text-[10px] font-black text-gray-500 uppercase">Metodo
                                     </th>
-                                    <th class="px-4 py-3 text-left text-[10px] font-black text-gray-500 uppercase">Notas
+                                    <th class="px-4 py-3 text-left text-[10px] font-black text-gray-500 uppercase">Banco / Ref
                                     </th>
                                     <th class="px-4 py-3 text-right text-[10px] font-black text-gray-500 uppercase">Monto
                                     </th>
@@ -464,7 +464,11 @@
                                             </span>
                                         </td>
                                         <td class="px-4 py-3 text-xs text-gray-500">
-                                            {{ Str::limit($payment->notes ?? '', 45) ?: '—' }}
+                                            @if ($methodLabel === 'transferencia')
+                                                {{ $payment->bank_name ?? '' }}{{ $payment->bank_name && $payment->reference ? ' / ' : '' }}{{ $payment->reference ?? '' }}
+                                            @else
+                                                —
+                                            @endif
                                         </td>
                                         <td
                                             class="px-4 py-3 whitespace-nowrap text-sm text-right font-bold text-cyan-700">
