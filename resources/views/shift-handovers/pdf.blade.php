@@ -32,7 +32,7 @@
         table.table th { background: #f3f4f6; text-transform: uppercase; letter-spacing: .04em; color: #374151; text-align: left; font-size: 9px; }
         .text-right { text-align: right; }
         .text-center { text-align: center; }
-        table.table tfoot td { border-top: 2px solid #111827; font-weight: 800; padding: 6px 5px; font-size: 10px; }
+        table.table tfoot td { border-top: 2px solid #111827; border-bottom: none; font-weight: 800; padding: 8px 5px; font-size: 12px; }
         .muted { color: #6b7280; }
         .badge { display: inline-block; padding: 2px 6px; border-radius: 999px; font-size: 9px; font-weight: 700; text-transform: uppercase; }
         .badge-blue { background: #dbeafe; color: #1d4ed8; }
@@ -194,7 +194,7 @@
                 <tfoot>
                     <tr>
                         <td colspan="6" class="text-right">Total</td>
-                        <td class="text-right">${{ number_format($shiftRentals->sum(fn($s) => (float) ($s->rental_total ?? (($s->reservation?->reservationRooms?->firstWhere('room_id', $s->room_id)?->subtotal ?? 0) ?: ($s->reservation?->total_amount ?? 0)))), 0, ',', '.') }}</td>
+                        <td class="text-right">${{ number_format($shiftRentals->sum(fn($s) => (float) ($s->paid_in_shift ?? 0)), 0, ',', '.') }}</td>
                     </tr>
                 </tfoot>
             </table>
@@ -209,15 +209,17 @@
             <table class="table">
                 <thead>
                     <tr>
-                        <th>Hora</th>
-                        <th>Productos</th>
-                        <th class="text-center">Metodo</th>
-                        <th class="text-right">Total</th>
+                        <th style="width: 12%">Fecha</th>
+                        <th style="width: 10%">Hora</th>
+                        <th style="width: 35%">Productos</th>
+                        <th style="width: 23%" class="text-center">Metodo</th>
+                        <th style="width: 20%" class="text-right">Total</th>
                     </tr>
                 </thead>
                 <tbody>
                     @foreach($handover->sales->sortByDesc('created_at') as $sale)
                         <tr>
+                            <td>{{ optional($sale->created_at)?->translatedFormat('D d/m') ?? 'N/A' }}</td>
                             <td>{{ optional($sale->created_at)->format('H:i') }}</td>
                             <td>
                                 @foreach($sale->items->take(3) as $item)
@@ -234,7 +236,7 @@
                 </tbody>
                 <tfoot>
                     <tr>
-                        <td colspan="3" class="text-right">Total</td>
+                        <td colspan="4" class="text-right">Total</td>
                         <td class="text-right">${{ number_format($handover->sales->sum(fn($s) => (float) ($s->total ?? 0)), 0, ',', '.') }}</td>
                     </tr>
                 </tfoot>
