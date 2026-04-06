@@ -179,7 +179,9 @@ class CashOutflowManager extends Component
             }
         }
 
-        if ($this->date) {
+        if ($isAdmin && $activeShift) {
+            $query->where('shift_handover_id', $activeShift->id);
+        } elseif ($this->date) {
             $query->whereDate('date', $this->date);
         }
 

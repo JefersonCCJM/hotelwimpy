@@ -8,7 +8,7 @@
                 <div class="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
                     <i class="fas fa-search text-gray-400 text-sm"></i>
                 </div>
-                <input type="text" wire:model.live.debounce.300ms="search" 
+                <input type="text" autocomplete="off" wire:model.live.debounce.300ms="search" 
                        class="block w-full pl-10 pr-3 py-2.5 bg-gray-50 border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 transition-all"
                        placeholder="Nombre o SKU...">
             </div>

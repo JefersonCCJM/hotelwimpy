@@ -6,39 +6,40 @@
     <title>Turno #{{ $handover->id }}</title>
     <style>
         @page { margin: 24px; }
-        body { font-family: DejaVu Sans, sans-serif; font-size: 11px; color: #111827; line-height: 1.45; }
+        body { font-family: DejaVu Sans, sans-serif; font-size: 10px; color: #111827; line-height: 1.5; }
         .header { border-bottom: 2px solid #0f766e; padding-bottom: 10px; margin-bottom: 12px; }
         .header-table { width: 100%; border-collapse: collapse; }
         .header-table td { vertical-align: top; }
         .logo-cell { width: 84px; }
         .logo { width: 70px; height: auto; }
-        .brand { margin: 0 0 2px; font-size: 18px; font-weight: 800; color: #0f766e; }
-        .doc-title { margin: 0; font-size: 15px; font-weight: 700; color: #111827; }
-        .doc-subtitle { margin: 3px 0 0; font-size: 10px; color: #4b5563; }
-        .meta-right { text-align: right; font-size: 10px; color: #4b5563; }
+        .brand { margin: 0 0 2px; font-size: 13px; font-weight: 800; color: #0f766e; }
+        .doc-title { margin: 0; font-size: 12px; font-weight: 700; color: #111827; }
+        .doc-subtitle { margin: 3px 0 0; font-size: 9px; color: #4b5563; }
+        .meta-right { text-align: right; font-size: 9px; color: #4b5563; }
         .meta-right p { margin: 0 0 3px; }
         .section { border: 1px solid #e5e7eb; border-radius: 6px; padding: 10px; margin-bottom: 10px; }
         .section-title { margin: 0 0 8px; font-size: 10px; font-weight: 800; text-transform: uppercase; letter-spacing: .05em; color: #111827; }
         .meta { width: 100%; border-collapse: collapse; }
         .meta td { padding: 4px 6px; vertical-align: top; }
         .k { font-size: 9px; color: #6b7280; text-transform: uppercase; font-weight: 700; letter-spacing: .04em; }
-        .v { font-size: 11px; font-weight: 700; }
+        .v { font-size: 10px; color: #111827; font-weight: 700; }
         .v-red { color: #b91c1c; }
         .v-green { color: #047857; }
         .v-blue { color: #1d4ed8; }
         .v-indigo { color: #4338ca; }
-        table.data { width: 100%; border-collapse: collapse; margin-top: 6px; }
-        table.data th, table.data td { border-bottom: 1px solid #e5e7eb; padding: 6px 5px; font-size: 10px; }
-        table.data th { background: #f3f4f6; text-transform: uppercase; letter-spacing: .04em; font-size: 9px; text-align: left; color: #374151; }
-        .right { text-align: right; }
-        .center { text-align: center; }
+        table.table { width: 100%; border-collapse: collapse; }
+        table.table th, table.table td { border-bottom: 1px solid #e5e7eb; padding: 6px 5px; font-size: 10px; }
+        table.table th { background: #f3f4f6; text-transform: uppercase; letter-spacing: .04em; color: #374151; text-align: left; font-size: 9px; }
+        .text-right { text-align: right; }
+        .text-center { text-align: center; }
+        table.table tfoot td { border-top: 2px solid #111827; border-bottom: none; font-weight: 800; padding: 8px 5px; font-size: 12px; }
         .muted { color: #6b7280; }
         .badge { display: inline-block; padding: 2px 6px; border-radius: 999px; font-size: 9px; font-weight: 700; text-transform: uppercase; }
         .badge-blue { background: #dbeafe; color: #1d4ed8; }
         .badge-green { background: #dcfce7; color: #047857; }
         .badge-red { background: #fee2e2; color: #b91c1c; }
         .badge-amber { background: #fef3c7; color: #92400e; }
-        .footer { margin-top: 12px; padding-top: 8px; border-top: 1px solid #e5e7eb; text-align: center; font-size: 9px; color: #6b7280; }
+        .footer { margin-top: 12px; padding-top: 8px; border-top: 1px solid #e5e7eb; text-align: center; color: #6b7280; font-size: 9px; }
     </style>
 </head>
 <body>
@@ -144,15 +145,16 @@
         @if($shiftRentals->isEmpty())
             <div class="muted">No hay habitaciones arrendadas en este turno.</div>
         @else
-            <table class="data">
+            <table class="table">
                 <thead>
                     <tr>
+                        <th>Fecha</th>
                         <th>Hora</th>
                         <th>Habitacion</th>
                         <th>Huesped</th>
                         <th>Reserva</th>
                         <th>Estado pago</th>
-                        <th class="right">Valor</th>
+                        <th class="text-right">Valor</th>
                     </tr>
                 </thead>
                 <tbody>
@@ -179,15 +181,22 @@
                             }
                         @endphp
                         <tr>
+                            <td>{{ optional($stay->check_in_at)?->translatedFormat('D d/m') ?? 'N/A' }}</td>
                             <td>{{ optional($stay->check_in_at)->format('H:i') ?? 'N/A' }}</td>
                             <td>Hab. {{ $stay->room->room_number ?? 'N/A' }}</td>
                             <td>{{ $reservation?->customer?->name ?? 'Sin cliente' }}</td>
                             <td>{{ $reservation->reservation_code ?? ('#' . ($reservation->id ?? 'N/A')) }}</td>
                             <td>{{ $payLabel }} (Turno: ${{ number_format($paidInShift, 0, ',', '.') }})</td>
-                            <td class="right">${{ number_format($rowTotal, 0, ',', '.') }}</td>
+                            <td class="text-right">${{ number_format($rowTotal, 0, ',', '.') }}</td>
                         </tr>
                     @endforeach
                 </tbody>
+                <tfoot>
+                    <tr>
+                        <td colspan="6" class="text-right">Total</td>
+                        <td class="text-right">${{ number_format($shiftRentals->sum(fn($s) => (float) ($s->paid_in_shift ?? 0)), 0, ',', '.') }}</td>
+                    </tr>
+                </tfoot>
             </table>
         @endif
     </div>
@@ -197,22 +206,20 @@
         @if($handover->sales->isEmpty())
             <div class="muted">No hay ventas POS registradas en este turno.</div>
         @else
-            <table class="data">
+            <table class="table">
                 <thead>
                     <tr>
-                        <th>ID</th>
-                        <th>Hora</th>
-                        <th>Productos</th>
-                        <th class="center">Metodo</th>
-                        <th class="right">Efectivo</th>
-                        <th class="right">Transferencia</th>
-                        <th class="right">Total</th>
+                        <th style="width: 12%">Fecha</th>
+                        <th style="width: 10%">Hora</th>
+                        <th style="width: 35%">Productos</th>
+                        <th style="width: 23%" class="text-center">Metodo</th>
+                        <th style="width: 20%" class="text-right">Total</th>
                     </tr>
                 </thead>
                 <tbody>
                     @foreach($handover->sales->sortByDesc('created_at') as $sale)
                         <tr>
-                            <td>#{{ $sale->id }}</td>
+                            <td>{{ optional($sale->created_at)?->translatedFormat('D d/m') ?? 'N/A' }}</td>
                             <td>{{ optional($sale->created_at)->format('H:i') }}</td>
                             <td>
                                 @foreach($sale->items->take(3) as $item)
@@ -222,13 +229,17 @@
                                     +{{ $sale->items->count() - 3 }} mas
                                 @endif
                             </td>
-                            <td class="center">{{ $sale->payment_method }}</td>
-                            <td class="right">${{ number_format((float) ($sale->cash_amount ?? 0), 0, ',', '.') }}</td>
-                            <td class="right">${{ number_format((float) ($sale->transfer_amount ?? 0), 0, ',', '.') }}</td>
-                            <td class="right">${{ number_format((float) ($sale->total ?? 0), 0, ',', '.') }}</td>
+                            <td class="text-center">{{ $sale->payment_method }}</td>
+                            <td class="text-right">${{ number_format((float) ($sale->total ?? 0), 0, ',', '.') }}</td>
                         </tr>
                     @endforeach
                 </tbody>
+                <tfoot>
+                    <tr>
+                        <td colspan="4" class="text-right">Total</td>
+                        <td class="text-right">${{ number_format($handover->sales->sum(fn($s) => (float) ($s->total ?? 0)), 0, ',', '.') }}</td>
+                    </tr>
+                </tfoot>
             </table>
         @endif
     </div>
@@ -238,7 +249,7 @@
         @if($shiftRoomSales->isEmpty())
             <div class="muted">No hay consumos de habitaciones en este turno.</div>
         @else
-            <table class="data">
+            <table class="table">
                 <thead>
                     <tr>
                         <th>ID</th>
@@ -246,10 +257,10 @@
                         <th>Habitacion</th>
                         <th>Huesped</th>
                         <th>Producto</th>
-                        <th class="center">Cant.</th>
-                        <th class="center">Metodo</th>
-                        <th class="center">Estado</th>
-                        <th class="right">Total</th>
+                        <th class="text-center">Cant.</th>
+                        <th class="text-center">Metodo</th>
+                        <th class="text-center">Estado</th>
+                        <th class="text-right">Total</th>
                     </tr>
                 </thead>
                 <tbody>
@@ -269,13 +280,19 @@
                             <td>{{ $roomNumbers ? 'Hab. ' . $roomNumbers : 'N/A' }}</td>
                             <td>{{ $reservation?->customer?->name ?? 'Sin cliente' }}</td>
                             <td>{{ $roomSale->product?->name ?? 'N/A' }}</td>
-                            <td class="center">{{ (int) ($roomSale->quantity ?? 0) }}</td>
-                            <td class="center">{{ $roomSale->payment_method ?? 'pendiente' }}</td>
-                            <td class="center">{{ (bool) ($roomSale->is_paid ?? false) ? 'Pagado' : 'Pendiente' }}</td>
-                            <td class="right">${{ number_format((float) ($roomSale->total ?? 0), 0, ',', '.') }}</td>
+                            <td class="text-center">{{ (int) ($roomSale->quantity ?? 0) }}</td>
+                            <td class="text-center">{{ $roomSale->payment_method ?? 'pendiente' }}</td>
+                            <td class="text-center">{{ (bool) ($roomSale->is_paid ?? false) ? 'Pagado' : 'Pendiente' }}</td>
+                            <td class="text-right">${{ number_format((float) ($roomSale->total ?? 0), 0, ',', '.') }}</td>
                         </tr>
                     @endforeach
                 </tbody>
+                <tfoot>
+                    <tr>
+                        <td colspan="8" class="text-right">Total</td>
+                        <td class="text-right">${{ number_format($shiftRoomSales->sum(fn($s) => (float) ($s->total ?? 0)), 0, ',', '.') }}</td>
+                    </tr>
+                </tfoot>
             </table>
         @endif
     </div>
@@ -285,16 +302,14 @@
         @if($shiftInventoryProducts->isEmpty())
             <div class="muted">Sin movimientos de inventario en este turno.</div>
         @else
-            <table class="data">
+            <table class="table">
                 <thead>
                     <tr>
                         <th>Producto</th>
-                        <th class="right">Recibido</th>
-                        <th class="right">Entradas</th>
-                        <th class="right">Salidas</th>
-                        <th class="right">Ventas</th>
-                        <th class="right">Consumo Hab.</th>
-                        <th class="right">Entrega</th>
+                        <th class="text-right">Recibido</th>
+                        <th class="text-right">Ventas</th>
+                        <th class="text-right">Consumo Hab.</th>
+                        <th class="text-right">Entrega</th>
                     </tr>
                 </thead>
                 <tbody>
@@ -306,12 +321,10 @@
                                     <span class="muted">({{ $productRow['product_sku'] }})</span>
                                 @endif
                             </td>
-                            <td class="right">{{ number_format((float) ($productRow['opening'] ?? 0), 0, ',', '.') }}</td>
-                            <td class="right">{{ number_format((float) ($productRow['entries'] ?? 0), 0, ',', '.') }}</td>
-                            <td class="right">{{ number_format((float) ($productRow['outputs'] ?? 0), 0, ',', '.') }}</td>
-                            <td class="right">{{ number_format((float) ($productRow['sales'] ?? 0), 0, ',', '.') }}</td>
-                            <td class="right">{{ number_format((float) ($productRow['room_consumption'] ?? 0), 0, ',', '.') }}</td>
-                            <td class="right">{{ number_format((float) ($productRow['closing'] ?? 0), 0, ',', '.') }}</td>
+                            <td class="text-right">{{ number_format((float) ($productRow['opening'] ?? 0), 0, ',', '.') }}</td>
+                            <td class="text-right">{{ number_format((float) ($productRow['sales'] ?? 0), 0, ',', '.') }}</td>
+                            <td class="text-right">{{ number_format((float) ($productRow['room_consumption'] ?? 0), 0, ',', '.') }}</td>
+                            <td class="text-right">{{ number_format((float) ($productRow['closing'] ?? 0), 0, ',', '.') }}</td>
                         </tr>
                     @endforeach
                 </tbody>
@@ -322,23 +335,31 @@
     @if($handover->cashOutflows->isNotEmpty())
         <div class="section">
             <div class="section-title">Gastos del Turno ({{ $handover->cashOutflows->count() }})</div>
-            <table class="data">
+            <table class="table">
                 <thead>
                     <tr>
+                        <th>Fecha</th>
                         <th>Hora</th>
                         <th>Motivo</th>
-                        <th class="right">Monto</th>
+                        <th class="text-right">Monto</th>
                     </tr>
                 </thead>
                 <tbody>
                     @foreach($handover->cashOutflows->sortByDesc('created_at') as $outflow)
                         <tr>
+                            <td>{{ optional($outflow->created_at)?->translatedFormat('D d/m') ?? 'N/A' }}</td>
                             <td>{{ optional($outflow->created_at)->format('H:i') }}</td>
                             <td>{{ $outflow->reason }}</td>
-                            <td class="right">${{ number_format((float) ($outflow->amount ?? 0), 0, ',', '.') }}</td>
+                            <td class="text-right">${{ number_format((float) ($outflow->amount ?? 0), 0, ',', '.') }}</td>
                         </tr>
                     @endforeach
                 </tbody>
+                <tfoot>
+                    <tr>
+                        <td colspan="3" class="text-right">Total</td>
+                        <td class="text-right">${{ number_format($handover->cashOutflows->sum(fn($o) => (float) ($o->amount ?? 0)), 0, ',', '.') }}</td>
+                    </tr>
+                </tfoot>
             </table>
         </div>
     @endif
@@ -346,13 +367,13 @@
     @if($handover->productOuts->isNotEmpty())
         <div class="section">
             <div class="section-title">Salidas de Productos ({{ $handover->productOuts->count() }})</div>
-            <table class="data">
+            <table class="table">
                 <thead>
                     <tr>
                         <th>Hora</th>
                         <th>Producto</th>
                         <th>Motivo</th>
-                        <th class="center">Cant.</th>
+                        <th class="text-center">Cant.</th>
                     </tr>
                 </thead>
                 <tbody>
@@ -361,7 +382,7 @@
                             <td>{{ optional($po->created_at)->format('H:i') }}</td>
                             <td>{{ $po->product->name ?? 'N/A' }}</td>
                             <td>{{ $po->reason->label() }}</td>
-                            <td class="center">{{ number_format((float) ($po->quantity ?? 0), 0, ',', '.') }}</td>
+                            <td class="text-center">{{ number_format((float) ($po->quantity ?? 0), 0, ',', '.') }}</td>
                         </tr>
                     @endforeach
                 </tbody>

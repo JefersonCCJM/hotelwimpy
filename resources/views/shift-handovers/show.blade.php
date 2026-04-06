@@ -223,6 +223,7 @@
                         <table class="min-w-full divide-y divide-gray-100">
                             <thead class="bg-gray-50">
                                 <tr>
+                                    <th class="px-4 py-3 text-left text-[10px] font-black text-gray-500 uppercase">Fecha</th>
                                     <th class="px-4 py-3 text-left text-[10px] font-black text-gray-500 uppercase">Hora</th>
                                     <th class="px-4 py-3 text-left text-[10px] font-black text-gray-500 uppercase">
                                         Habitación</th>
@@ -304,6 +305,9 @@
                                     @endphp
                                     <tr class="hover:bg-gray-50">
                                         <td class="px-4 py-3 whitespace-nowrap text-xs text-gray-500">
+                                            {{ optional($stay->check_in_at)->format('d/m/Y') }} ({{ optional($stay->check_in_at)->locale('es')->isoFormat('ddd') }})
+                                        </td>
+                                        <td class="px-4 py-3 whitespace-nowrap text-xs text-gray-500">
                                             {{ optional($stay->check_in_at)->format('H:i') ?? 'N/A' }}
                                         </td>
                                         <td class="px-4 py-3 whitespace-nowrap text-sm font-bold text-gray-900">
@@ -316,7 +320,12 @@
                                             {{ $reservation->reservation_code ?? '#' . ($reservation->id ?? 'N/A') }}
                                         </td>
                                         <td class="px-4 py-3 whitespace-nowrap text-sm text-gray-600">
-                                            {{ $reservationRoom && $reservationRoom->check_out_date ? \Carbon\Carbon::parse($reservationRoom->check_out_date)->format('d/m/Y') : 'N/A' }}
+                                            @if ($reservationRoom && $reservationRoom->check_out_date)
+                                                @php $coDate = \Carbon\Carbon::parse($reservationRoom->check_out_date); @endphp
+                                                {{ $coDate->format('d/m/Y') }} ({{ $coDate->locale('es')->isoFormat('ddd') }})
+                                            @else
+                                                N/A
+                                            @endif
                                         </td>
                                         <td class="px-4 py-3 whitespace-nowrap">
                                             <div class="flex flex-col gap-1">
@@ -358,10 +367,7 @@
                 ->filter(fn($p) => !in_array($p->id, $alreadyReversedIds))
                 ->sum(fn($p) => (float) $p->amount);
         @endphp
-        <div class="bg-white rounded-xl border border-gray-100 shadow-sm overflow-hidden"
-             x-data="{
-                 reversedInSession: {{ json_encode($alreadyReversedIds) }}
-             }">
+        <div class="bg-white rounded-xl border border-gray-100 shadow-sm overflow-hidden">
             <div class="px-6 py-4 border-b border-gray-100 flex items-center justify-between">
                 <h3 class="font-bold text-gray-900 uppercase text-xs tracking-wider">
                     <i class="fas fa-file-invoice-dollar mr-2 text-cyan-500"></i>Pagos y Abonos de Reservas
@@ -379,6 +385,8 @@
                         <table class="min-w-full divide-y divide-gray-100">
                             <thead class="bg-gray-50">
                                 <tr>
+                                    <th class="px-4 py-3 text-left text-[10px] font-black text-gray-500 uppercase">Fecha
+                                    </th>
                                     <th class="px-4 py-3 text-left text-[10px] font-black text-gray-500 uppercase">Hora
                                     </th>
                                     <th class="px-4 py-3 text-left text-[10px] font-black text-gray-500 uppercase">Forma
@@ -391,7 +399,7 @@
                                         Habitacion</th>
                                     <th class="px-4 py-3 text-center text-[10px] font-black text-gray-500 uppercase">Metodo
                                     </th>
-                                    <th class="px-4 py-3 text-left text-[10px] font-black text-gray-500 uppercase">Notas
+                                    <th class="px-4 py-3 text-left text-[10px] font-black text-gray-500 uppercase">Banco / Ref
                                     </th>
                                     <th class="px-4 py-3 text-right text-[10px] font-black text-gray-500 uppercase">Monto
                                     </th>
@@ -408,6 +416,11 @@
                                             ->implode(', ');
                                         $isReversal = (float) $payment->amount < 0;
                                         $alreadyReversed = in_array($payment->id, $alreadyReversedIds);
+                                    @endphp
+                                    @if ($isReversal || $alreadyReversed)
+                                        @continue
+                                    @endif
+                                    @php
                                         $pmCode = strtolower(
                                             $payment->paymentMethod?->code ?? ($payment->paymentMethod?->name ?? ''),
                                         );
@@ -424,9 +437,15 @@
                                             default => 'bg-gray-100 text-gray-700',
                                         };
                                     @endphp
-                                    <tr x-bind:class="reversedInSession.includes({{ $payment->id }}) ? 'opacity-50 bg-red-50/40' : '{{ $isReversal ? 'bg-red-50/40' : 'hover:bg-gray-50' }}'">
+                                    <tr class="hover:bg-gray-50">
+                                        @php
+                                            $paymentDate = $payment->paid_at ?? $payment->created_at;
+                                        @endphp
                                         <td class="px-4 py-3 whitespace-nowrap text-xs text-gray-500">
-                                            {{ optional($payment->paid_at ?? $payment->created_at)->format('H:i') }}
+                                            {{ optional($paymentDate)->format('d/m/Y') }} ({{ optional($paymentDate)->locale('es')->isoFormat('ddd') }})
+                                        </td>
+                                        <td class="px-4 py-3 whitespace-nowrap text-xs text-gray-500">
+                                            {{ optional($paymentDate)->format('H:i') }}
                                         </td>
                                         <td class="px-4 py-3 whitespace-nowrap text-center">
                                             @php
@@ -448,12 +467,6 @@
                                         </td>
                                         <td class="px-4 py-3 whitespace-nowrap text-xs font-mono text-gray-600">
                                             {{ $res?->reservation_code ?? '#' . ($res?->id ?? 'N/A') }}
-                                            @if ($isReversal)
-                                                <span
-                                                    class="ml-1 px-1 py-0.5 rounded text-[9px] font-bold bg-red-100 text-red-700 uppercase">Reversa</span>
-                                            @endif
-                                            <span x-show="reversedInSession.includes({{ $payment->id }})"
-                                                class="ml-1 px-1 py-0.5 rounded text-[9px] font-bold bg-red-100 text-red-700 uppercase">Revertido</span>
                                         </td>
                                         <td class="px-4 py-3 text-sm text-gray-700">
                                             {{ $res?->customer?->name ?? 'N/A' }}
@@ -468,11 +481,15 @@
                                             </span>
                                         </td>
                                         <td class="px-4 py-3 text-xs text-gray-500">
-                                            {{ Str::limit($payment->notes ?? '', 45) ?: '—' }}
+                                            @if ($methodLabel === 'transferencia')
+                                                {{ $payment->bank_name ?? '' }}{{ $payment->bank_name && $payment->reference ? ' / ' : '' }}{{ $payment->reference ?? '' }}
+                                            @else
+                                                —
+                                            @endif
                                         </td>
                                         <td
-                                            class="px-4 py-3 whitespace-nowrap text-sm text-right font-bold {{ $isReversal ? 'text-red-600' : 'text-cyan-700' }}">
-                                            {{ $isReversal ? '-' : '' }}${{ number_format(abs((float) $payment->amount), 0, ',', '.') }}
+                                            class="px-4 py-3 whitespace-nowrap text-sm text-right font-bold text-cyan-700">
+                                            ${{ number_format(abs((float) $payment->amount), 0, ',', '.') }}
                                         </td>
                                     </tr>
                                 @endforeach
@@ -524,15 +541,13 @@
                             <thead class="bg-gray-50">
                                 <tr>
                                     <th class="px-4 py-3 text-left text-[10px] font-black text-gray-500 uppercase">ID</th>
+                                    <th class="px-4 py-3 text-left text-[10px] font-black text-gray-500 uppercase">Fecha
+                                    </th>
                                     <th class="px-4 py-3 text-left text-[10px] font-black text-gray-500 uppercase">Hora
                                     </th>
                                     <th class="px-4 py-3 text-left text-[10px] font-black text-gray-500 uppercase">
                                         Productos</th>
                                     <th class="px-4 py-3 text-center text-[10px] font-black text-gray-500 uppercase">Metodo
-                                    </th>
-                                    <th class="px-4 py-3 text-right text-[10px] font-black text-gray-500 uppercase">
-                                        Efectivo</th>
-                                    <th class="px-4 py-3 text-right text-[10px] font-black text-gray-500 uppercase">Transf.
                                     </th>
                                     <th class="px-4 py-3 text-right text-[10px] font-black text-gray-500 uppercase">Total
                                     </th>
@@ -543,6 +558,8 @@
                                     <tr class="hover:bg-gray-50">
                                         <td class="px-4 py-3 whitespace-nowrap text-xs text-gray-400 font-mono">
                                             #{{ $sale->id }}</td>
+                                        <td class="px-4 py-3 whitespace-nowrap text-xs text-gray-500">
+                                            {{ $sale->created_at->format('d/m/Y') }} ({{ $sale->created_at->locale('es')->isoFormat('ddd') }})</td>
                                         <td class="px-4 py-3 whitespace-nowrap text-xs text-gray-500">
                                             {{ $sale->created_at->format('H:i') }}</td>
                                         <td class="px-4 py-3 text-sm text-gray-700">
@@ -571,13 +588,6 @@
                                                 class="px-2 py-0.5 rounded-full text-[10px] font-bold uppercase {{ $methodClass }}">
                                                 {{ $sale->payment_method }}
                                             </span>
-                                        </td>
-                                        <td
-                                            class="px-4 py-3 whitespace-nowrap text-sm text-right font-bold text-emerald-600">
-                                            ${{ number_format($sale->cash_amount ?? 0, 0, ',', '.') }}
-                                        </td>
-                                        <td class="px-4 py-3 whitespace-nowrap text-sm text-right font-bold text-blue-600">
-                                            ${{ number_format($sale->transfer_amount ?? 0, 0, ',', '.') }}
                                         </td>
                                         <td class="px-4 py-3 whitespace-nowrap text-sm text-right font-bold text-gray-900">
                                             ${{ number_format($sale->total, 0, ',', '.') }}

@@ -166,11 +166,16 @@
                                     {{ $handover->status->value }}
                                 </span>
                             </td>
-                            <td class="px-4 py-4 whitespace-nowrap text-center text-sm font-medium">
+                            <td class="px-4 py-4 whitespace-nowrap text-center text-sm font-medium space-x-1">
                                 <a href="{{ route('shift-handovers.show', $handover->id) }}"
                                    class="inline-flex items-center justify-center px-3 py-1.5 rounded-lg transition-colors text-xs font-bold {{ $handover->status->value === 'activo' ? 'text-emerald-700 hover:text-emerald-900 bg-emerald-50 border border-emerald-100' : 'text-blue-700 hover:text-blue-900 bg-blue-50 border border-blue-100' }}">
                                     <i class="fas fa-eye mr-1"></i>
                                     {{ $handover->status->value === 'activo' ? 'Ver en Vivo' : 'Ver Detalle' }}
+                                </a>
+                                <a href="{{ route('shift-handovers.pdf', $handover->id) }}"
+                                   class="inline-flex items-center justify-center px-3 py-1.5 rounded-lg transition-colors text-xs font-bold text-red-700 hover:text-red-900 bg-red-50 border border-red-100">
+                                    <i class="fas fa-file-pdf mr-1"></i>
+                                    PDF
                                 </a>
                             </td>
                         </tr>
