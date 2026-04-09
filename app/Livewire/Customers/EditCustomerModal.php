@@ -2,23 +2,25 @@
 
 namespace App\Livewire\Customers;
 
-use Livewire\Component;
+use App\Models\CompanyTaxSetting;
 use App\Models\Customer;
 use App\Models\CustomerTaxProfile;
+use App\Models\DianCustomerTribute;
 use App\Models\DianIdentificationDocument;
 use App\Models\DianLegalOrganization;
-use App\Models\DianCustomerTribute;
 use App\Models\DianMunicipality;
-use App\Models\CompanyTaxSetting;
-use Livewire\Attributes\On;
 use Illuminate\Support\Facades\Log;
+use Livewire\Attributes\On;
+use Livewire\Component;
 
 class EditCustomerModal extends Component
 {
     public bool $isOpen = false;
+
     public Customer $customer;
+
     public CustomerTaxProfile $taxProfile;
-    
+
     public array $formData = [
         'name' => '',
         'identification' => '',
@@ -36,10 +38,15 @@ class EditCustomerModal extends Component
     ];
 
     public array $errors = [];
+
     public bool $isUpdating = false;
+
     public string $identificationMessage = '';
+
     public bool $identificationExists = false;
+
     public bool $requiresDV = false;
+
     public bool $isJuridicalPerson = false;
 
     #[On('open-edit-customer-modal')]
@@ -85,19 +92,19 @@ class EditCustomerModal extends Component
 
     public function isElectronicInvoiceCustomer(): bool
     {
-        return $this->customer->requires_electronic_invoice ?? false;
+        return (bool) ($this->formData['requires_electronic_invoice'] ?? false);
     }
 
     private function loadCustomerData(): void
     {
         $this->formData = [
             'name' => $this->customer->name,
-            'identification' => $this->taxProfile->identification ?? '',
+            'identification' => $this->taxProfile->identification ?? $this->customer->identification_number ?? '',
             'phone' => $this->customer->phone ?? '',
             'email' => $this->customer->email ?? '',
             'address' => $this->customer->address ?? '',
             'requires_electronic_invoice' => $this->customer->requires_electronic_invoice ?? false,
-            'identification_document_id' => $this->taxProfile->identification_document_id ?? '',
+            'identification_document_id' => $this->taxProfile->identification_document_id ?? $this->customer->identification_type_id ?? '',
             'dv' => $this->taxProfile->dv ?? '',
             'company' => $this->taxProfile->company ?? '',
             'trade_name' => $this->taxProfile->trade_name ?? '',
@@ -109,6 +116,27 @@ class EditCustomerModal extends Component
         $this->updateRequiredFields();
     }
 
+    public function updatedFormDataRequiresElectronicInvoice(bool $value): void
+    {
+        if ($value) {
+            $this->formData['identification'] = $this->formData['identification']
+                ?: ($this->customer->identification_number ?? '');
+            $this->formData['identification_document_id'] = $this->formData['identification_document_id']
+                ?: ($this->customer->identification_type_id ?? '');
+            $this->formData['legal_organization_id'] = $this->formData['legal_organization_id'] ?: 2;
+            $this->formData['tribute_id'] = $this->formData['tribute_id'] ?: 21;
+        }
+
+        $this->updateRequiredFields();
+    }
+
+    public function toggleElectronicInvoice(): void
+    {
+        $nextValue = !($this->formData['requires_electronic_invoice'] ?? false);
+        $this->formData['requires_electronic_invoice'] = $nextValue;
+        $this->updatedFormDataRequiresElectronicInvoice($nextValue);
+    }
+
     public function updatedFormDataIdentificationDocumentId(): void
     {
         $this->updateRequiredFields();
@@ -116,7 +144,6 @@ class EditCustomerModal extends Component
 
     public function updatedFormDataName(): void
     {
-        // Si es NIT y la razón social está vacía o es igual al nombre anterior, actualizarla
         if ($this->isJuridicalPerson && (empty($this->formData['company']) || $this->formData['company'] === $this->customer->name)) {
             $this->formData['company'] = $this->formData['name'];
         }
@@ -125,7 +152,6 @@ class EditCustomerModal extends Component
     public function updatedFormDataIdentification(): void
     {
         $this->validateIdentification();
-        // No calcular automáticamente el DV, permitir edición manual
     }
 
     private function checkIdentificationSync(): void
@@ -139,16 +165,16 @@ class EditCustomerModal extends Component
             $profile = CustomerTaxProfile::where('identification', $this->formData['identification'])
                 ->where('customer_id', '!=', $this->customer->id)
                 ->first();
-            
+
             if ($profile) {
                 $customer = Customer::withTrashed()->find($profile->customer_id);
                 if ($customer) {
                     $this->identificationExists = true;
-                    $this->identificationMessage = "Este cliente ya está registrado como: {$customer->name}";
+                    $this->identificationMessage = "Este cliente ya esta registrado como: {$customer->name}";
                     return;
                 }
             }
-            
+
             $this->identificationExists = false;
         } catch (\Exception $e) {
             Log::error('Error checking identification sync: ' . $e->getMessage());
@@ -165,72 +191,48 @@ class EditCustomerModal extends Component
         }
 
         $document = DianIdentificationDocument::find($this->formData['identification_document_id']);
-        if ($document) {
-            $this->requiresDV = $document->requires_dv;
-            $this->isJuridicalPerson = $document->code === 'NIT';
-            
-            // No calcular automáticamente el DV, permitir edición manual
-            // Solo limpiar el campo si no es NIT
-            if (!$this->isJuridicalPerson) {
-                $this->formData['dv'] = '';
-            }
-            
-            // Autocompletar razón social con el nombre del cliente si es NIT y está vacía
-            if ($this->isJuridicalPerson && empty($this->formData['company'])) {
-                $this->formData['company'] = $this->formData['name'] ?? '';
-            }
-        }
-    }
-
-    private function calculateDV(): void
-    {
-        if (!$this->isJuridicalPerson || empty($this->formData['identification'])) {
-            $this->formData['dv'] = '';
+        if (!$document) {
+            $this->requiresDV = false;
+            $this->isJuridicalPerson = false;
             return;
         }
 
-        $nit = preg_replace('/\D/', '', $this->formData['identification']);
-        if (empty($nit)) {
+        $this->requiresDV = (bool) $document->requires_dv;
+        $this->isJuridicalPerson = $document->code === 'NIT';
+
+        if (!$this->isJuridicalPerson) {
             $this->formData['dv'] = '';
-            return;
         }
 
-        $weights = [3, 7, 13, 17, 19, 23, 29, 37, 41, 43, 47, 53, 59, 67, 71];
-        $sum = 0;
-        
-        for ($i = 0; $i < strlen($nit); $i++) {
-            $sum += intval($nit[strlen($nit) - 1 - $i]) * $weights[$i];
+        if ($this->isJuridicalPerson && empty($this->formData['company'])) {
+            $this->formData['company'] = $this->formData['name'] ?? '';
         }
-        
-        $remainder = $sum % 11;
-        $this->formData['dv'] = $remainder < 2 ? (string)$remainder : (string)(11 - $remainder);
     }
 
     private function validateIdentification(): void
     {
         $this->errors['identification'] = null;
         $identification = trim($this->formData['identification'] ?? '');
-        
-        if (empty($identification)) {
-            $this->errors['identification'] = 'La identificación es obligatoria.';
+
+        if ($identification === '') {
+            $this->errors['identification'] = 'La identificacion es obligatoria.';
             return;
         }
 
         $digitCount = strlen(preg_replace('/\D/', '', $identification));
 
         if ($digitCount < 6) {
-            $this->errors['identification'] = 'El número de documento debe tener mínimo 6 dígitos.';
+            $this->errors['identification'] = 'El numero de documento debe tener minimo 6 digitos.';
             return;
         }
 
         if ($digitCount > 10) {
-            $this->errors['identification'] = 'El número de documento debe tener máximo 10 dígitos.';
+            $this->errors['identification'] = 'El numero de documento debe tener maximo 10 digitos.';
             return;
         }
 
         if (!preg_match('/^\d+$/', $identification)) {
-            $this->errors['identification'] = 'El número de documento solo puede contener dígitos.';
-            return;
+            $this->errors['identification'] = 'El numero de documento solo puede contener digitos.';
         }
     }
 
@@ -238,11 +240,11 @@ class EditCustomerModal extends Component
     {
         $this->errors = [];
         $this->validateIdentification();
-        
+
         if (!empty($this->errors['identification'])) {
             $this->dispatch('notify', [
                 'type' => 'error',
-                'message' => 'Error en identificación: ' . ($this->errors['identification'] ?? 'Error desconocido')
+                'message' => 'Error en identificacion: ' . ($this->errors['identification'] ?? 'Error desconocido'),
             ]);
             return;
         }
@@ -251,92 +253,114 @@ class EditCustomerModal extends Component
             $this->errors['name'] = 'El nombre es obligatorio.';
             $this->dispatch('notify', [
                 'type' => 'error',
-                'message' => 'El nombre es obligatorio.'
+                'message' => 'El nombre es obligatorio.',
             ]);
             return;
         }
 
-        // Check identification synchronously before updating
         $this->checkIdentificationSync();
 
         if ($this->identificationExists) {
-            $this->errors['identification'] = 'Este cliente ya está registrado.';
+            $this->errors['identification'] = 'Este cliente ya esta registrado.';
             $this->dispatch('notify', [
                 'type' => 'error',
-                'message' => 'Este cliente ya está registrado: ' . $this->identificationMessage
+                'message' => 'Este cliente ya esta registrado: ' . $this->identificationMessage,
             ]);
             return;
         }
 
-        // Solo validar campos de facturación electrónica si está activada
-        if (!empty($this->formData['requires_electronic_invoice']) && $this->formData['requires_electronic_invoice'] === true) {
+        $requiresElectronicInvoice = (bool) ($this->formData['requires_electronic_invoice'] ?? false);
+
+        if ($requiresElectronicInvoice) {
             if (empty($this->formData['identification_document_id'])) {
-                $this->errors['identification_document_id'] = 'El tipo de documento es obligatorio para facturación electrónica.';
+                $this->errors['identification_document_id'] = 'El tipo de documento es obligatorio para facturacion electronica.';
             }
+
+            if (empty(trim((string) ($this->formData['address'] ?? '')))) {
+                $this->errors['address'] = 'La direccion es obligatoria para facturacion electronica.';
+            }
+
+            $email = trim((string) ($this->formData['email'] ?? ''));
+            if ($email === '') {
+                $this->errors['email'] = 'El correo electronico es obligatorio para facturacion electronica.';
+            } elseif (!filter_var($email, FILTER_VALIDATE_EMAIL)) {
+                $this->errors['email'] = 'El correo electronico no es valido.';
+            }
+
+            if (empty($this->formData['legal_organization_id'])) {
+                $this->errors['legal_organization_id'] = 'La organizacion legal es obligatoria para facturacion electronica.';
+            }
+
+            if (empty($this->formData['tribute_id'])) {
+                $this->errors['tribute_id'] = 'El tipo de tributo es obligatorio para facturacion electronica.';
+            }
+
             if (empty($this->formData['municipality_id'])) {
-                $this->errors['municipality_id'] = 'El municipio es obligatorio para facturación electrónica.';
+                $this->errors['municipality_id'] = 'El municipio es obligatorio para facturacion electronica.';
             }
-            // Validar razón social para NIT, pero permitir que esté autocompletada con el nombre
-            if ($this->isJuridicalPerson) {
-                if (empty($this->formData['company'])) {
-                    $this->formData['company'] = $this->formData['name']; // Autocompletar con el nombre
-                }
+
+            if ($this->isJuridicalPerson && empty($this->formData['company'])) {
+                $this->formData['company'] = $this->formData['name'];
             }
-            // Validar DV si es requerido
+
             if ($this->requiresDV && trim((string) ($this->formData['dv'] ?? '')) === '') {
-                $this->errors['dv'] = 'El dígito verificador es obligatorio.';
+                $this->errors['dv'] = 'El digito verificador es obligatorio.';
             }
-            if ($this->requiresDV && (trim((string) ($this->formData['dv'] ?? '')) !== '' && !preg_match('/^[0-9]$/', $this->formData['dv']))) {
-                $this->errors['dv'] = 'El DV debe ser un solo dígito (0-9).';
+
+            if ($this->requiresDV && trim((string) ($this->formData['dv'] ?? '')) !== '' && !preg_match('/^[0-9]$/', (string) $this->formData['dv'])) {
+                $this->errors['dv'] = 'El DV debe ser un solo digito (0-9).';
             }
         }
 
-        $allErrors = array_filter($this->errors, fn($v) => !empty($v));
-        
+        $allErrors = array_filter($this->errors, fn ($value) => !empty($value));
+
         if (!empty($allErrors)) {
             $errorMessages = [];
             foreach ($allErrors as $key => $value) {
-                $fieldName = match($key) {
+                $fieldName = match ($key) {
                     'name' => 'Nombre',
-                    'phone' => 'Teléfono',
-                    'identification' => 'Identificación',
+                    'phone' => 'Telefono',
+                    'email' => 'Correo electronico',
+                    'address' => 'Direccion',
+                    'identification' => 'Identificacion',
                     'identification_document_id' => 'Tipo de documento',
+                    'legal_organization_id' => 'Organizacion legal',
+                    'tribute_id' => 'Tipo de tributo',
                     'municipality_id' => 'Municipio',
-                    'company' => 'Razón social',
-                    'dv' => 'Dígito Verificador',
-                    default => ucfirst(str_replace('_', ' ', $key))
+                    'company' => 'Razon social',
+                    'dv' => 'Digito verificador',
+                    default => ucfirst(str_replace('_', ' ', $key)),
                 };
-                $errorMessages[] = "$fieldName: " . (is_array($value) ? implode(', ', $value) : $value);
+
+                $errorMessages[] = $fieldName . ': ' . (is_array($value) ? implode(', ', $value) : $value);
             }
-            
-            $errorText = implode(' | ', $errorMessages);
-            
+
             $this->dispatch('notify', [
                 'type' => 'error',
-                'message' => $errorText
+                'message' => implode(' | ', $errorMessages),
             ]);
-            
+
             return;
         }
 
         $this->isUpdating = true;
 
         try {
-            $requiresElectronicInvoice = $this->formData['requires_electronic_invoice'] ?? false;
-            
-            // Update customer
+            $identificationDocumentId = $this->formData['identification_document_id']
+                ?: $this->customer->identification_type_id
+                ?: 3;
+
             $this->customer->update([
                 'name' => mb_strtoupper($this->formData['name']),
                 'phone' => $this->formData['phone'],
                 'email' => !empty($this->formData['email']) ? mb_strtolower($this->formData['email']) : null,
                 'address' => $this->formData['address'] ?? null,
-                'is_active' => $this->customer->is_active, // Preserve status
+                'is_active' => $this->customer->is_active,
                 'requires_electronic_invoice' => $requiresElectronicInvoice,
                 'identification_number' => $this->formData['identification'] ?? null,
-                'identification_type_id' => $this->formData['identification_document_id'] ?? null,
+                'identification_type_id' => $identificationDocumentId,
             ]);
 
-            // Update or create tax profile
             $municipalityId = $requiresElectronicInvoice
                 ? ($this->formData['municipality_id'] ?? null)
                 : (CompanyTaxSetting::first()?->municipality_id
@@ -346,9 +370,7 @@ class EditCustomerModal extends Component
             $taxProfileData = [
                 'identification' => $this->formData['identification'],
                 'dv' => $this->formData['dv'] ?? null,
-                'identification_document_id' => $requiresElectronicInvoice
-                    ? ($this->formData['identification_document_id'] ?? null)
-                    : 3,
+                'identification_document_id' => $identificationDocumentId,
                 'legal_organization_id' => $requiresElectronicInvoice
                     ? ($this->formData['legal_organization_id'] ?? null)
                     : 2,
@@ -356,6 +378,10 @@ class EditCustomerModal extends Component
                     ? ($this->formData['tribute_id'] ?? null)
                     : 21,
                 'municipality_id' => $municipalityId,
+                'names' => $this->formData['name'] ?? null,
+                'address' => $this->formData['address'] ?? null,
+                'email' => !empty($this->formData['email']) ? mb_strtolower($this->formData['email']) : null,
+                'phone' => $this->formData['phone'] ?? null,
                 'company' => $requiresElectronicInvoice && $this->isJuridicalPerson
                     ? ($this->formData['company'] ?? null)
                     : null,
@@ -373,29 +399,28 @@ class EditCustomerModal extends Component
 
             $this->dispatch('customer-updated');
             $this->close();
-            
+
             $this->dispatch('notify', [
                 'type' => 'success',
-                'message' => 'Cliente actualizado exitosamente.'
+                'message' => 'Cliente actualizado exitosamente.',
             ]);
-            
         } catch (\Illuminate\Validation\ValidationException $e) {
             $this->errors = array_merge($this->errors, $e->errors());
             $this->dispatch('notify', [
                 'type' => 'error',
-                'message' => 'Error de validación: ' . implode(', ', array_map(fn($err) => is_array($err) ? implode(', ', $err) : $err, $e->errors()))
+                'message' => 'Error de validacion: ' . implode(', ', array_map(fn ($err) => is_array($err) ? implode(', ', $err) : $err, $e->errors())),
             ]);
         } catch (\Exception $e) {
             Log::error('Error updating customer: ' . $e->getMessage(), [
                 'trace' => $e->getTraceAsString(),
                 'formData' => $this->formData,
                 'file' => $e->getFile(),
-                'line' => $e->getLine()
+                'line' => $e->getLine(),
             ]);
             $this->addError('general', 'Error al actualizar el cliente: ' . $e->getMessage());
             $this->dispatch('notify', [
                 'type' => 'error',
-                'message' => 'Error al actualizar el cliente: ' . $e->getMessage()
+                'message' => 'Error al actualizar el cliente: ' . $e->getMessage(),
             ]);
         } finally {
             $this->isUpdating = false;
