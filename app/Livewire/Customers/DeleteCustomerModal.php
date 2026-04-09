@@ -31,9 +31,15 @@ class DeleteCustomerModal extends Component
         try {
             // Check if customer has reservations or other dependencies
             if ($this->customer->reservations()->exists()) {
+                $message = 'No se puede eliminar el cliente porque tiene reservas asociadas.';
+
+                if (!$this->customer->requires_electronic_invoice) {
+                    $message .= ' Si lo necesitas para facturacion electronica, editalo y activale esa opcion sobre el mismo registro.';
+                }
+
                 $this->dispatch('notify', [
                     'type' => 'error',
-                    'message' => 'No se puede eliminar el cliente porque tiene reservas asociadas.'
+                    'message' => $message
                 ]);
                 return;
             }
